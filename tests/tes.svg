@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080">
+    
+    <rect x="0" y="0" width="100%" height="100%" style="fill: none; stroke: #000;" />
+    <rect x="10" y="10" width="200" height="200" style="fill: #f00;" />
+
+    <defs>
+        <linearGradient id="Gradient2" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="red" />
+            <stop offset="50%" stop-color="black" stop-opacity="0" />
+            <stop offset="100%" stop-color="blue" />
+        </linearGradient>
+    </defs>
+    
+
+    <rect x="600" y="600" width="200" height="200" fill="url(#Gradient2)" />
+
+
+    <g style="transform: translate(0px, 1px);">
+        <defs>
+            <clipPath id="clip2">
+                <rect x="350" y="200" width="200" height="400" style="fill: #000;" />
+            </clipPath>
+        </defs>
+        <g style="clip-path: url(#clip2)">
+            <g style="transform: translate(100px, 0px);">
+                <defs>
+                    <clipPath id="clip1">
+                        <path style="transform: translate(150px, 330px);" d="M140 20C73 20 20 74 20 140c0 135 136 170 228 303 88-132 229-173 229-303 0-66-54-120-120-120-48 0-90 28-109 69-19-41-60-69-108-69z" />
+                    </clipPath>
+                </defs>
+                <g style="clip-path: url(#clip1)">
+                    <image href="https://picsum.photos/seed/flat-svg/600/450" x="200" y="200" width="600" height="450" style="transform: rotate(15deg);" />
+                </g>
+            </g>
+        </g>
+    </g>
+
+    <g style="transform: rotate(-10deg);">
+        <text x="400" y="200" style="font-size: 32px; transform: translate(100px, 0px);">
+            HELLO WORLD
+        </text>
+        <defs>
+            <clipPath id="clip3">
+                <circle cx="550" cy="320" r="50" />
+            </clipPath>
+        </defs>
+        <text x="500" y="300" style="font-size: 32px; clip-path: url(#clip3);">
+            <tspan>
+                FOO
+            </tspan>
+            <tspan>
+                BAR
+            </tspan>
+        </text>
+    </g>
+</svg>

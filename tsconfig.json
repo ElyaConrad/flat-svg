@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", // Unterstützt moderne JS-Funktionen wie Top-Level Await
+    "module": "ESNext", // Nutzt ECMAScript-Module (ESM), kompatibel mit Browser und modernen Tools
+    "moduleResolution": "Node", // Unterstützt die Auflösung wie in Node.js
+    "lib": ["ES2020", "DOM"], // Inkludiert moderne ECMAScript-Features und DOM-APIs für den Browser
+    "declaration": true, // Erstellt Typdefinitionsdateien (.d.ts) für den Export
+    "declarationMap": true, // Erstellt Mapping-Dateien für die Deklarationen
+    "outDir": "./dist", // Ausgabeordner für kompilierte Dateien
+    "rootDir": "./src", // Root-Verzeichnis für den Quellcode
+    "strict": true, // Aktiviert den strengen Modus für Typüberprüfungen
+    "esModuleInterop": true, // Bessere Interoperabilität mit CommonJS-Modulen
+    "allowSyntheticDefaultImports": true, // Erlaubt den Import von Modulen ohne "default" Export
+    "skipLibCheck": true, // Überspringt die Typprüfung von Bibliotheksdateien
+    "resolveJsonModule": true, // Ermöglicht das Importieren von JSON-Dateien
+    "isolatedModules": true, // Stellt sicher, dass jede Datei als separates Modul behandelt wird
+    "allowJs": true, // Erlaubt JavaScript-Dateien in der Kompilierung
+    "forceConsistentCasingInFileNames": true, // Erzwingt konsistente Groß-/Kleinschreibung bei Dateinamen
+    "types": ["node"], // Unterstützt sowohl Node.js- als auch Browser-Umgebungen
+    "useDefineForClassFields": true // Aktiviert das moderne Verhalten für Klassenfeldinitialisierungen
+  },
+  "include": ["src"], // Quelle für den gesamten zu kompilierenden Code
+  "exclude": ["node_modules", "**/*.spec.ts"], // Schließt Testdateien und node_modules aus
+  "tsBuildInfoFile": "./dist/.tsbuildinfo" // Speichert Build-Informationen für inkrementelles Kompilieren
+}
