@@ -1,11 +1,15 @@
 import paper from 'paper';
 import xmlFormat from 'xml-formatter';
-import { createInlineStyle, getElementClipPath, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin } from './util/css.js';
+import { createInlineStyle, ensureNumber, getElementClipPath, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin } from './util/css.js';
 import { ElementNode, makeElementNode, nodeToNode, parseXML, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
 import { getClipPath } from './util/clipPath.js';
 import { RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
 import { arrayBufferToBase64 } from './util/arrayBuffer.js';
+import { textElementToPath } from './util/textToPath.js';
+import { getSeperatePaths } from './main.js';
+import { mergeSeperatePathsBackIfTheyOverlap } from './main.js';
+import intersect from 'path-intersection';
 
 export * from './util/css.js';
 export * from './util/xml.js';
@@ -53,6 +57,9 @@ function getAllGlobalFilters(svg: SVGSVGElement) {
 function getAllGlobalGradients(svg: SVGSVGElement) {
   return Array.from(svg.querySelectorAll('linearGradient, radialGradient')).map(nodeToNode);
 }
+function getAllGlobalStyles(svg: SVGSVGElement) {
+  return Array.from(svg.querySelectorAll('style')).map(nodeToNode);
+}
 
 function getElementTransformationMatrix(element: Element) {
   const transforms = getTransformationsInOrder(element);
@@ -81,6 +88,7 @@ function getElementTransformationMatrix(element: Element) {
 
 function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTransformMatrix: paper.Matrix, tracingClipPath: paper.PathItem | undefined, tracingMasks: string[], opts: { keepGroupTransforms: boolean; rasterize?: RasterizeFunction }): SimpleElement[] {
   return elements
+    .filter((element) => element.nodeName !== 'defs')
     .map((element) => {
       const topMatrix = tracingTransformMatrix.clone();
 
@@ -183,6 +191,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
         } else if (element.nodeName === 'circle') {
           const circle = element as SVGCircleElement;
           const attributes = getElementAttributes(circle, ['style']);
+          const radius = ensureNumber(attributes.r) ?? 0;
+          const cx = ensureNumber(attributes.cx) ?? 0;
+          const cy = ensureNumber(attributes.cy) ?? 0;
+          delete attributes.r;
+          attributes.rx = `${radius}`;
+          attributes.ry = `${radius}`;
           const style = getElementStyle(circle);
           return {
             type: 'ellipse',
@@ -375,15 +389,102 @@ This method simplifies an SVG by doing the following:
   - Just supports clip-paths
   - No support for embedded SVGs
 */
-export function simplifySVG(
-  svg: SVGSVGElement,
+export async function simplifySVG(
+  document: Document,
   opts: {
     keepGroupTransforms: boolean;
     rasterize?: RasterizeFunction;
   }
 ) {
+  const svg = document.querySelector('svg')!;
   const filters = getAllGlobalFilters(svg);
   const gradients = getAllGlobalGradients(svg);
+  const styles = getAllGlobalStyles(svg);
+
+  // We cannot merge texts in clip paths, so we have to convert them to paths
+  for (const textElement of svg.querySelectorAll('clipPath text') as NodeListOf<SVGTextElement>) {
+    const { paths, text } = await textElementToPath(textElement, svg);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('data-text', text);
+    const allPaths = paths.flat();
+
+    let anyIntersection = false;
+    const singlePath = allPaths.slice(1).reduce((accD, path) => {
+      const d = path.toString();
+      if (intersect(accD, d).length > 0) {
+        anyIntersection = true;
+      }
+      accD = accD.replace(/Z/g, '');
+      return `${accD} ${d}`;
+    }, allPaths[0].toString());
+
+    for (const path of allPaths) {
+      const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      pathElement.setAttribute('d', path.toString());
+      g.appendChild(pathElement);
+    }
+
+    //console.log('SINGLE PATH', singlePath);
+
+    // if (anyIntersection) {
+    //   for (const path of allPaths) {
+    //     const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    //     pathElement.setAttribute('d', path.toString());
+    //     g.appendChild(pathElement);
+    //   }
+    // } else {
+    //   const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    //   pathElement.setAttribute('d', singlePath);
+    //   g.appendChild(pathElement);
+    // }
+
+    // for (const path of allPaths) {
+    //   const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    //   pathElement.setAttribute('d', path.toString());
+    //   g.appendChild(pathElement);
+    // }
+
+    // const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    // pathElement.setAttribute('data-text', text);
+    // pathElement.setAttribute('d', paths.map((path) => path.toString()).join(' '));
+    // textGroups.push(pathElement);
+    console.log('!!!', text, anyIntersection);
+
+    textElement.replaceWith(g);
+  }
+
+  // // We do not support multi-paths with Z inside for clipPaths, so we have to convert them to single paths
+  // const pathsInsideCipPath = svg.querySelectorAll('clipPath path') as NodeListOf<SVGPathElement>;
+  // for (const multiPathInsideClipPath of pathsInsideCipPath) {
+  //   const d = multiPathInsideClipPath.getAttribute('d');
+  //   if (!d) {
+  //     continue;
+  //   }
+  //   const subPaths = mergeSeperatePathsBackIfTheyOverlap(getSeperatePaths(d));
+
+  //   if (subPaths.length >= 2) {
+  //     const newPaths = subPaths.map((d) => {
+  //       const newNode = multiPathInsideClipPath.cloneNode(false) as SVGPathElement;
+  //       newNode.setAttribute('d', d);
+  //       return newNode;
+  //     });
+  //     multiPathInsideClipPath.replaceWith(...newPaths);
+  //   }
+  // }
+
+  const textGroups: SVGGElement[] = [];
+
+  // for (const textElement of svg.querySelectorAll('text.text-to-path') as NodeListOf<SVGTextElement>) {
+  //   console.log('text-to-path', textElement);
+  //   const { paths, text } = await textElementToPath(textElement, svg);
+  //   const newPathElements = paths.flat().map((path) => {
+  //     const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  //     pathElement.setAttribute('data-text', text);
+  //     pathElement.setAttribute('d', path.toString());
+  //     return pathElement;
+  //   });
+  //   textElement.replaceWith(...newPathElements);
+  // }
 
   const elements = simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, [], {
     keepGroupTransforms: opts.keepGroupTransforms,
@@ -396,7 +497,7 @@ export function simplifySVG(
       xmlns: 'http://www.w3.org/2000/svg',
       viewBox: svg.getAttribute('viewBox') ?? undefined,
     },
-    [makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements)]
+    [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements), ...textGroups.map(nodeToNode)]
   );
 
   return parseXML(stringifyNode(newSVG)) as any as SVGSVGElement;

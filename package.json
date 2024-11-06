@@ -39,6 +39,8 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@types/css": "^0.0.38",
+    "@types/fontkit": "^2.0.7",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.8.5",
     "npm-watch": "^0.13.0",
@@ -46,9 +48,16 @@
   },
   "dependencies": {
     "@js-bits/dom-parser": "^1.0.3",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "change-case": "^5.4.4",
+    "css": "^3.0.0",
     "css-expression": "^0.0.8",
+    "fontkit": "^2.0.4",
     "inline-style-parser": "^0.2.4",
+    "p-limit": "^6.1.0",
     "paper-jsdom": "^0.12.18",
+    "path-intersection": "^3.1.0",
+    "svg-path-commander": "^2.1.3",
     "xml-formatter": "^3.6.3"
   }
 }

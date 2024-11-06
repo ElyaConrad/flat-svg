@@ -13,8 +13,10 @@ export type RasterizeFunction = (svg: SVGSVGElement) =>
   | undefined;
 
 export function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, currMatrix: paper.Matrix, rasterize: RasterizeFunction) {
-  const dom = new JSDOM(rootSVG.outerHTML, { contentType: 'image/svg+xml' });
-  const document = dom.window.document;
+  const { document } = new JSDOM(rootSVG.outerHTML, {
+    pretendToBeVisual: true,
+    contentType: 'image/svg+xml',
+  }).window;
 
   const svg = document.querySelector('svg') as SVGSVGElement;
 

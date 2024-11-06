@@ -1,5 +1,6 @@
 import { ICSSFunction, ICSSPrimitive, parse as parseCSSExpression } from 'css-expression';
 import parseInlineStyle, { Declaration } from 'inline-style-parser';
+import * as changeCase from 'change-case';
 
 export type PartialTransform = Partial<{
   translate: [number, number];
@@ -10,6 +11,14 @@ export type PartialTransform = Partial<{
 export type TransformWithOrigin = PartialTransform & {
   origin: [number, number];
 };
+
+export function ensureNumber(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const num = Number(value);
+  return isNaN(num) ? undefined : num;
+}
 
 export function getElementStyle(element: Element) {
   const styleAttr = element.getAttribute('style');
@@ -27,20 +36,23 @@ export function ensureCSSValue(value: string | undefined) {
   return isNaN(num) ? 0 : num;
 }
 
-function getSVGUrlValue(element: Element, propertyName: string) {
-  const clipPathAttr = element.getAttribute(propertyName);
+export function getSVGValue(element: Element, propertyName: string) {
+  const propNameCamelCase = changeCase.camelCase(propertyName);
+  const propNameKebabCase = changeCase.kebabCase(propertyName);
+  const attr = element.getAttribute(propNameKebabCase) ?? element.getAttribute(propNameCamelCase);
   const styleAttr = element.getAttribute('style');
-  const clipPathStr = (() => {
-    if (clipPathAttr) {
-      return clipPathAttr;
-    } else if (styleAttr) {
-      const inlineStyleEntries = parseInlineStyle(styleAttr);
-      const clipPathDeclaration = inlineStyleEntries.find((entry) => entry.type === 'declaration' && entry.property === propertyName) as Declaration | undefined;
-      if (clipPathDeclaration) {
-        return clipPathDeclaration.value;
-      }
+  if (attr) {
+    return attr;
+  } else if (styleAttr) {
+    const inlineStyleEntries = parseInlineStyle(styleAttr);
+    const declaration = inlineStyleEntries.find((entry) => entry.type === 'declaration' && (entry.property === propNameKebabCase || entry.property === propNameCamelCase)) as Declaration | undefined;
+    if (declaration) {
+      return declaration.value;
     }
-  })();
+  }
+}
+function getSVGUrlValue(element: Element, propertyName: string) {
+  const clipPathStr = getSVGValue(element, propertyName);
   if (!clipPathStr) {
     return undefined;
   }
@@ -157,4 +169,8 @@ export function createInlineStyle(values: { [k: string]: string | undefined }) {
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}: ${value}`)
     .join('; ');
+}
+
+export function extractCSSString(value: string) {
+  return value.startsWith(`'`) || value.startsWith(`"`) ? value.slice(1, -1) : value;
 }
