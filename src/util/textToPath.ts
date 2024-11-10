@@ -14,6 +14,7 @@ export type TextFragment = {
   bbox: fontkit.Glyph['bbox'];
   descent: number;
   ascent: number;
+  unitsPerEm: number;
 };
 
 type Glyph = {
@@ -22,6 +23,7 @@ type Glyph = {
   cbox: fontkit.Glyph['cbox'];
   xAdvance: number;
   advanceWidth: number;
+  letterSpacing: number;
   isLigature: boolean;
   isMark: boolean;
 };
@@ -45,7 +47,19 @@ export function getTextFormat(text: SVGTextElement | SVGTSpanElement, inherit?: 
   const fontWeight = ensureNumber(String(fontWeightRaw)) ?? 400;
   const fontStyle = fontStyleRaw;
   const fontSize = ensureCSSValue(String(fontSizeRaw)) ?? 12;
-  const letterSpacing = ensureNumber(String(letterSpacingRaw)) ?? 1;
+  const letterSpacing = (() => {
+    const relLetterSpacing = ensureNumber(String(letterSpacingRaw));
+    if (relLetterSpacing !== undefined) {
+      return (relLetterSpacing - 1) * fontSize;
+    } else {
+      const unit = String(letterSpacingRaw).match('px') ? 'px' : undefined;
+      if (unit === 'px') {
+        return ensureNumber(String(letterSpacingRaw).replace(/[^0-9\.]/g, '')) ?? 0;
+      }
+    }
+    return 0;
+  })();
+  //const letterSpacing = ensureNumber(String(letterSpacingRaw).replace(/[^0-9\.]/g, '')) ?? 1;
 
   return {
     fontFamily,
@@ -81,7 +95,6 @@ function guessFontVariationtBasedOnNamedWeight(weight: string, namedVariations: 
 // but an error happens (I have no idea why)
 function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing: number, concreteWeight?: number | string): TextFragment {
   const fontBase = fontkit.create(fontData as any);
-
   const _font = (() => {
     if ((fontBase as fontkit.FontCollection).fonts) {
       const fontCollection = fontBase as fontkit.FontCollection;
@@ -97,10 +110,8 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
         return _font.getVariation(guessFontVariationtBasedOnNamedWeight(concreteWeight, (_font as any).namedVariations));
       } else {
         const weightVariation = (_font as any).variationAxes['wght'] as { name: string; min: number; default: number; max: number };
-        console.log('weightVariation', weightVariation);
 
         const weight = Math.min(Math.max(weightVariation.min, concreteWeight ?? weightVariation.default), weightVariation.max);
-        console.log(weight);
 
         return _font.getVariation({ wght: weight });
       }
@@ -110,7 +121,9 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
   })();
   const glyphs: Glyph[] = [];
 
-  const run = font.layout(text, undefined, 'de-DE', 'ltr');
+  const run = (() => {
+    return font.layout(text);
+  })();
   let xAdvance = 0;
   let i = 0;
   for (const glyph of run.glyphs) {
@@ -126,8 +139,10 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
       isLigature,
       isMark,
       xAdvance,
+      letterSpacing,
     });
-    xAdvance += run.positions[i].xAdvance * letterSpacing;
+
+    xAdvance += run.positions[i].xAdvance;
     i++;
   }
 
@@ -136,6 +151,7 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
     bbox: font.bbox,
     ascent: font.ascent,
     descent: font.descent,
+    unitsPerEm: font.unitsPerEm,
   };
 }
 
@@ -151,15 +167,14 @@ function scaleFontkitBBox(bbox: fontkit.Glyph['bbox'], scale: number) {
 }
 
 export function textToPath(text: string, fontData: Uint8Array, fontSize: number, letterSpacing: number, alignmentBaseline: 'hanging' | 'middle' | 'baseline', concreteWeight?: number | string) {
-  const { glyphs, ascent, descent } = generateSvgPathRules(text, fontData, letterSpacing, concreteWeight);
+  const { glyphs, ascent, descent, unitsPerEm } = generateSvgPathRules(text, fontData, letterSpacing, concreteWeight);
 
-  const assumedDefaultFontSize = 1000;
-  const scale = fontSize / assumedDefaultFontSize;
+  const scale = fontSize / unitsPerEm;
 
   for (const glyph of glyphs) {
     if (glyph.path) {
       glyph.path.transform({ scale });
-      glyph.xAdvance *= scale;
+      glyph.xAdvance = glyph.xAdvance * scale;
       glyph.advanceWidth *= scale;
       glyph.bbox = scaleFontkitBBox(glyph.bbox, scale);
       glyph.cbox = scaleFontkitBBox(glyph.cbox, scale);
@@ -189,7 +204,7 @@ function getBBoxesPath(bboxes: { x: number; y: number; width: number; height: nu
   };
 }
 
-export type SpanDescriptor = { format: TextFormat; text: string; dx?: number; dy?: number; x?: number; y?: number };
+export type SpanDescriptor = { format: TextFormat; text: string; dx?: number; dy?: number; x?: number; y?: number; style?: string };
 
 export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGElement) {
   const stylesheet = Array.from(rootSVG.querySelectorAll('style'))
@@ -221,6 +236,7 @@ export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGEle
           dy,
           x,
           y,
+          style: tspan.getAttribute('style') ?? undefined,
         };
       }
     })
@@ -233,17 +249,19 @@ export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGEle
 
   const paths = await Promise.all(
     spans.map(async (span, index) => {
-      const fontSrc = await getFontFile(stylesheet, textBaseFormat.fontFamily, textBaseFormat.fontWeight, textBaseFormat.fontStyle);
-      const needsSpaceAfter = index < spans.length - 1;
-      const glyphs = textToPath(needsSpaceAfter ? span.text + ' !' : span.text, await resolveFontFile(fontSrc), textBaseFormat.fontSize, textBaseFormat.letterSpacing, 'baseline', textBaseFormat.fontWeight);
+      const { format } = span;
 
-      // if (span.x !== undefined) {
-      //   spanOffset = span.x;
-      // }
+      const fontSrc = await getFontFile(stylesheet, format.fontFamily, format.fontWeight, format.fontStyle);
+      const needsSpaceAfter = index < spans.length - 1;
+
+      const glyphs = textToPath(needsSpaceAfter ? span.text + ' !' : span.text, await resolveFontFile(fontSrc), format.fontSize, format.letterSpacing, 'baseline', format.fontWeight);
+
+      const dx = span.dx ?? 0; //(span.x !== undefined ? span.x - (baseX + spanOffset) : 0);
+      const dy = span.dy ?? 0; //(span.y !== undefined ? span.y - baseY : 0);
 
       const paths = glyphs
-        .map((glyph) => {
-          return glyph.path ? glyph.path.transform({ translate: [span.x !== undefined ? span.x : baseX + spanOffset + glyph.xAdvance, baseY] }) : undefined;
+        .map((glyph, index) => {
+          return glyph.path ? glyph.path.transform({ translate: [span.x !== undefined ? span.x : baseX + spanOffset + dx + glyph.xAdvance + index * glyph.letterSpacing, baseY + dy] }) : undefined;
         })
         .filter((path) => path !== undefined) as SVGPathCommander[];
       const glyphBBoxes = paths.map((path) => ({ x: path.bbox.x, y: path.bbox.y, width: path.bbox.width, height: path.bbox.height })).slice(0, needsSpaceAfter ? -1 : undefined);
@@ -251,9 +269,10 @@ export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGEle
       const secondLastPath = paths[paths.length - 2];
       const spanWidth = getBBoxesPath(glyphBBoxes).width + (needsSpaceAfter ? lastPath.bbox.x - (secondLastPath.bbox.x + secondLastPath.bbox.width) : 0);
 
-      spanOffset += spanWidth;
+      spanOffset += dx + spanWidth;
       return {
         paths: needsSpaceAfter ? paths.slice(0, -1) : paths,
+        style: span.style,
         text: span.text + (needsSpaceAfter ? ' ' : ''),
       };
     })
@@ -266,7 +285,7 @@ export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGEle
   //   .filter((path) => path !== undefined) as SVGPathCommander[];
 
   return {
-    paths: paths.map((p) => p.paths),
+    paths: paths.map((p) => ({ paths: p.paths, style: p.style })),
     text: paths.map((p) => p.text).join(''),
   };
 }

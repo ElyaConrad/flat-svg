@@ -7,7 +7,7 @@ paper.setup(new paper.Size(1080, 1080));
 export type SVGShape = SVGRectElement | SVGCircleElement | SVGEllipseElement | SVGPolygonElement | SVGPolylineElement | SVGLineElement | SVGPathElement;
 export type SVGShapeOrGroup = SVGShape | SVGGElement;
 
-function getShapeElementsAndGroupsAndPaths(elements: HTMLCollection | Element[]): SVGShapeOrGroup[] {
+export function getShapeElementsAndGroupsAndPaths(elements: HTMLCollection | Element[]): SVGShapeOrGroup[] {
   return Array.from(elements).filter((element) => {
     return element.nodeName === 'circle' || element.nodeName === 'rect' || element.nodeName === 'polygon' || element.nodeName === 'polyline' || element.nodeName === 'ellipse' || element.nodeName === 'g' || element.nodeName === 'path';
   }) as SVGShapeOrGroup[];
@@ -109,8 +109,26 @@ export function getPaperPathItem(element: SVGShapeOrGroup): paper.PathItem {
     } else if (element.nodeName === 'path') {
       const d = element.getAttribute('d') ?? '';
 
-      // const [mainPath, ...subPaths] = getSeperatePaths(d);
       return new paper.Path(d);
+
+      // const [mainPath, ...subPaths] = getSeperatePaths(d);
+      // const rootPath = new paper.Path(mainPath);
+
+      // // console.log('root', rootPath.pathData);
+
+      // // // const alternativeSubPaths = [new paper.Path(`M 160,120 L 170,120 170,130 160,130`)];
+
+      // // rootPath.exclude(new paper.Path(`M 160,120 L 170,120 170,130 160,130`));
+
+      // // return rootPath;
+
+      // const mergedPath = subPaths.reduce((acc, subPath) => {
+      //   const path = new paper.Path(subPath);
+      //   path.exclude(acc);
+      //   return acc.clone({ insert: false });
+      // }, rootPath);
+
+      // return new paper.Path(mergedPath.pathData);
 
       // if (subPaths.length === 0) {
       //   return new paper.Path(mainPath);
@@ -149,9 +167,7 @@ export function getPaperPathItem(element: SVGShapeOrGroup): paper.PathItem {
       matrix.rotate(transform.rotate, originPoint);
     }
     if (transform.skew) {
-      const skewXRadians = (Math.PI / 180) * transform.skew[0];
-      const skewYRadians = (Math.PI / 180) * transform.skew[1];
-      matrix.skew(skewXRadians, skewYRadians, originPoint);
+      matrix.skew(transform.skew[0], transform.skew[1], originPoint);
     }
     pathItem.transform(matrix);
   }

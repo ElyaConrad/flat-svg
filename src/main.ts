@@ -1,36 +1,61 @@
 import paper from 'paper';
 import xmlFormat from 'xml-formatter';
-import { createInlineStyle, ensureNumber, getElementClipPath, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin } from './util/css.js';
+import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementFilter, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
 import { ElementNode, makeElementNode, nodeToNode, parseXML, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
-import { getClipPath } from './util/clipPath.js';
-import { RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
+import { getClipPath, getSimpleClipPath } from './util/clipPath.js';
+import { ApplyColorMatrixFunction, ColorMatrix, combineColorMatrices, getElementColorMatrices, RasterImage, rasterizeElement, RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
 import { arrayBufferToBase64 } from './util/arrayBuffer.js';
 import { textElementToPath } from './util/textToPath.js';
-import { getSeperatePaths } from './main.js';
-import { mergeSeperatePathsBackIfTheyOverlap } from './main.js';
-import intersect from 'path-intersection';
+import { applyToPoint, fromObject } from 'transformation-matrix';
+import SVGPathCommander, { PathArray, PathSegment } from 'svg-path-commander';
 
 export * from './util/css.js';
 export * from './util/xml.js';
 export * from './helpers.js';
 export * from './util/clipPath.js';
 export * from './util/booleanPath.js';
+export * from './util/cleanupBluepic.js';
 
 paper.setup(new paper.Size(1080, 1080));
+
+export type StdDeviation = [number, number];
+export type Blur = {
+  stdDeviation: StdDeviation;
+};
+
+function combineBlurs(blurs: Blur[]): StdDeviation {
+  let combinedX = 0;
+  let combinedY = 0;
+
+  for (const { stdDeviation } of blurs) {
+    combinedX += stdDeviation[0] ** 2;
+    combinedY += stdDeviation[1] ** 2;
+  }
+
+  // Quadratwurzel der Summen ergibt den kombinierten Standardabweichungswert
+  return [Math.sqrt(combinedX), Math.sqrt(combinedY)];
+}
 
 export type SimpleElementShape = {
   attributes: { [k: string]: string };
   style: { [k: string]: string };
   transform: paper.Matrix;
   clipPath?: paper.PathItem;
+  simpleClipPath?: SVGPathCommander;
   mask?: ReturnType<RasterizeFunction>;
+  colorMatrix: ColorMatrix;
+  opacity: number;
+  blurs: Blur[];
+  dropShadow?: DropShadow;
 };
 
 export type SimpleGroup = {
   type: 'group';
   children: SimpleElement[];
   transform: paper.Matrix;
+  keep: boolean;
+  dropShadow?: DropShadow;
 };
 export type SimpleRect = SimpleElementShape & {
   type: 'rect';
@@ -78,15 +103,161 @@ function getElementTransformationMatrix(element: Element) {
       matrix.rotate(transform.rotate, originPoint);
     }
     if (transform.skew) {
-      const skewXRadians = (Math.PI / 180) * transform.skew[0];
-      const skewYRadians = (Math.PI / 180) * transform.skew[1];
-      matrix.skew(skewXRadians, skewYRadians, originPoint);
+      matrix.skew(transform.skew[0], transform.skew[1], originPoint);
     }
   }
   return matrix;
 }
 
-function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTransformMatrix: paper.Matrix, tracingClipPath: paper.PathItem | undefined, tracingMasks: string[], opts: { keepGroupTransforms: boolean; rasterize?: RasterizeFunction }): SimpleElement[] {
+function decomposeMatrix(matrix: paper.Matrix) {
+  const { a, b, c, d, tx, ty } = matrix;
+
+  // Translation component is directly from e and f
+  const translate: [number, number] = [tx, ty];
+
+  // Scale components are the lengths of the vectors (a, b) and (c, d)
+  const scaleX = Math.sqrt(a * a + b * b);
+  const scaleY = Math.sqrt(c * c + d * d);
+
+  // Ensure the scale is positive to avoid flipping/skew issues
+  const scale: [number, number] = [scaleX, scaleY];
+
+  // Normalize the matrix to extract skew components
+  const aNorm = a / scaleX;
+  const bNorm = b / scaleX;
+  const cNorm = c / scaleY;
+  const dNorm = d / scaleY;
+
+  // Skew components are derived from the normalized matrix
+  const skewX = Math.atan2(aNorm * cNorm + bNorm * dNorm, aNorm * dNorm - bNorm * cNorm);
+  const skewY = Math.atan2(bNorm, aNorm);
+
+  // Convert skew values from radians to degrees
+  const skew: [number, number] = [
+    (skewX * 180) / Math.PI, // skewX in degrees
+    (skewY * 180) / Math.PI, // skewY in degrees
+  ];
+
+  return {
+    translate,
+    scale,
+    skew,
+  };
+}
+
+function transformPath(path: SVGPathCommander, matrix: paper.Matrix) {
+  const { a, b, c, d, tx, ty } = matrix;
+
+  const absolutePath = path.toAbsolute();
+
+  const _matrix = fromObject({ a, b, c, d, e: tx, f: ty });
+
+  let lastPoint = { x: 0, y: 0 };
+  const segments = absolutePath.segments.map((segment, index) => {
+    const lastSegment = absolutePath.segments[index - 1] as PathSegment | undefined;
+    const [command] = segment;
+
+    if (command === 'M' || command === 'L') {
+      const [, ...coords] = segment;
+      const point = { x: coords[0], y: coords[1] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedPoint = applyToPoint(_matrix, point);
+      return [command, transformedPoint.x, transformedPoint.y];
+    } else if (command === 'H') {
+      const [, ...coords] = segment;
+      const point = { x: coords[0], y: lastPoint.y };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['L', transformedPoint.x, transformedPoint.y];
+    } else if (command === 'V') {
+      const [, ...coords] = segment;
+      const point = { x: lastPoint.x, y: coords[0] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['L', transformedPoint.x, transformedPoint.y];
+    } else if (command === 'C') {
+      const [, ...coords] = segment;
+      const controlPoint1 = { x: coords[0], y: coords[1] };
+      const controlPoint2 = { x: coords[2], y: coords[3] };
+      const point = { x: coords[4], y: coords[5] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedControlPoint1 = applyToPoint(_matrix, controlPoint1);
+      const transformedControlPoint2 = applyToPoint(_matrix, controlPoint2);
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['C', transformedControlPoint1.x, transformedControlPoint1.y, transformedControlPoint2.x, transformedControlPoint2.y, transformedPoint.x, transformedPoint.y];
+    } else if (command === 'S') {
+      const [, ...coords] = segment;
+      const controlPoint2 = { x: coords[0], y: coords[1] };
+      const point = { x: coords[2], y: coords[3] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedControlPoint2 = applyToPoint(_matrix, controlPoint2);
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['S', transformedControlPoint2.x, transformedControlPoint2.y, transformedPoint.x, transformedPoint.y];
+    } else if (command === 'T') {
+      const [, ...coords] = segment;
+      const point = { x: coords[0], y: coords[1] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['T', transformedPoint.x, transformedPoint.y];
+    } else if (command === 'Q') {
+      const [, ...coords] = segment;
+      const controlPoint = { x: coords[0], y: coords[1] };
+      const point = { x: coords[2], y: coords[3] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedControlPoint = applyToPoint(_matrix, controlPoint);
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['Q', transformedControlPoint.x, transformedControlPoint.y, transformedPoint.x, transformedPoint.y];
+    } else if (command === 'A') {
+      const [, ...coords] = segment;
+      const rx = coords[0];
+      const ry = coords[1];
+      const xAxisRotation = coords[2];
+      const largeArcFlag = coords[3];
+      const sweepFlag = coords[4];
+      const point = { x: coords[5], y: coords[6] };
+      lastPoint = { x: point.x, y: point.y };
+      const transformedPoint = applyToPoint(_matrix, point);
+      return ['A', rx, ry, xAxisRotation, largeArcFlag, sweepFlag, transformedPoint.x, transformedPoint.y];
+    } else if (command === 'Z') {
+      return [command];
+    } else {
+      throw new Error('Invalid command');
+    }
+  }) as PathSegment[];
+
+  const newD = segments
+    .map((segment) => {
+      const [command] = segment;
+      switch (command) {
+        case 'L':
+        case 'M':
+          return `${command} ${segment[1]},${segment[2]}`;
+        case 'V':
+          return `${command} ${segment[1]}`;
+        case 'H':
+          return `${command} ${segment[1]}`;
+        case 'C':
+          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]} ${segment[5]},${segment[6]}`;
+        case 'S':
+          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]}`;
+        case 'Q':
+          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]}`;
+        case 'T':
+          return `${command} ${segment[1]},${segment[2]}`;
+        case 'A':
+          return `${command} ${segment[1]},${segment[2]} ${segment[3]} ${segment[4]} ${segment[5]} ${segment[6]},${segment[7]}`;
+        case 'Z':
+          return `${command}`;
+        default:
+          throw new Error('Invalid command');
+      }
+    })
+    .join(' ');
+
+  return new SVGPathCommander(newD);
+}
+
+function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTransformMatrix: paper.Matrix, tracingClipPath: paper.PathItem | undefined, tracingSimpleClipPath: SVGPathCommander | undefined, tracingMasks: string[], tracingColorMatrixes: number[][], tracingOpacity: number, tracingBlurs: Blur[], tracingDropShadows: DropShadow[], opts: { keepGroupTransforms: boolean; rasterize?: RasterizeFunction; applyColorMatrix?: ApplyColorMatrixFunction; rasterizeAllMasks: boolean }): SimpleElement[] {
   return elements
     .filter((element) => element.nodeName !== 'defs')
     .map((element) => {
@@ -105,6 +276,28 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
         }
       })();
 
+      // The simple clip path is a clip path that does not uses unite() of paper.js but just merges the d-strings of the paths together
+      // There will be such a simple clip path if the the clip path's elements do not intersect with each other
+      let localSimpleClipPath = (() => {
+        const localClipPathSelector = getElementClipPath(element);
+        if (localClipPathSelector) {
+          return getSimpleClipPath(localClipPathSelector, rootSVG);
+        }
+      })();
+
+      // Transforming the simple clip path is what it is
+      if (localSimpleClipPath) {
+        // Deprected
+        //localSimpleClipPath = localSimpleClipPath.transform(decomposeMatrix(currMatrix));
+        localSimpleClipPath = transformPath(localSimpleClipPath, currMatrix);
+      }
+      // If there is already an existing tracing clip path, we delete the simple clip path here
+      if ((tracingSimpleClipPath || tracingClipPath) && localSimpleClipPath) {
+        tracingSimpleClipPath = undefined;
+      } else if (localSimpleClipPath) {
+        tracingSimpleClipPath = new SVGPathCommander(localSimpleClipPath.toString());
+      }
+
       // Intersect clip paths
       if (localClipPath) {
         localClipPath.transform(currMatrix);
@@ -117,13 +310,20 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
         }
       }
 
-      const localizedClipPath = tracingClipPath ? tracingClipPath.clone().transform(topMatrix.clone().invert()) : undefined;
+      const localizedClipPath = tracingClipPath
+        ? (() => {
+            const newClipPath = tracingClipPath.clone();
+            newClipPath.transform(topMatrix.clone().invert());
+            return newClipPath;
+          })()
+        : undefined;
+      const localizedSimpleClipPath = tracingSimpleClipPath ? transformPath(tracingSimpleClipPath, topMatrix.clone().invert()) : undefined;
 
       // Mask
       const localMaskingElements = (() => {
         const maskSelector = getElementMask(element);
         if (maskSelector) {
-          const maskElement = rootSVG.querySelector(maskSelector);
+          const maskElement = rootSVG.getElementById(maskSelector.slice(1));
           if (maskElement) {
             return Array.from(maskElement.children);
           }
@@ -148,6 +348,28 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
         }
       })();
 
+      const localColorMatrix = combineColorMatrices(getElementColorMatrices(element, rootSVG));
+      if (localColorMatrix) {
+        tracingColorMatrixes = [...tracingColorMatrixes, localColorMatrix];
+      }
+
+      const localOpacity = getEleentOpacity(element);
+
+      const localBlur = getElementBlur(element, rootSVG);
+      if (localBlur) {
+        tracingBlurs = [...tracingBlurs, localBlur];
+      }
+
+      tracingOpacity *= localOpacity;
+
+      const localDropShadow = getElementDropShadow(element, rootSVG);
+
+      if (localDropShadow) {
+        tracingDropShadows = [...tracingDropShadows, localDropShadow];
+      }
+      // Actually, we're just supporting one drop shadow for now
+      const dropShadow = localDropShadow;
+
       if (element.nodeName === 'g') {
         const group = element as SVGGElement;
         return {
@@ -155,16 +377,56 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
           // If we are keeping the group transforms, we should apply the local matrix to the group
           // Otherwise, the group's matrix will be traced down to the final element which knows what to do with it
           transform: opts.keepGroupTransforms ? localMatrix : new paper.Matrix(),
-          children: simplifyElements(Array.from(group.children), rootSVG, currMatrix, tracingClipPath, currentMasks, opts),
+          children: simplifyElements(Array.from(group.children), rootSVG, currMatrix, tracingClipPath, tracingSimpleClipPath, currentMasks, tracingColorMatrixes, tracingOpacity, tracingBlurs, tracingDropShadows, opts),
+          keep: element.getAttribute('data-keep') === 'true',
+          dropShadow,
         };
       } else {
         // Rasterize masks using external function
-        const mask = currentMasks.length > 0 && opts.rasterize ? rasterizeMasks(currentMasks, rootSVG, currMatrix.clone(), opts.rasterize) : undefined;
+        const mask = (() => {
+          if (currentMasks.length > 0 && opts.rasterize) {
+            // Raster the element with the masks straightforward
+            if (opts.rasterizeAllMasks) {
+              return rasterizeMasks(currentMasks, rootSVG, currMatrix.clone(), opts.rasterize, opts.applyColorMatrix, elements.map((el) => el.outerHTML).join(''));
+            }
+            // Just rasterize the masks itself with a white background
+            else {
+              return rasterizeMasks(currentMasks, rootSVG, currMatrix.clone(), opts.rasterize, opts.applyColorMatrix, `<rect x="0%" y="0%" width="100%" height="100%" style="fill: white;" />`);
+            }
+          }
+        })();
+
         // If the groups are keeping their transforms, we should apply the local matrix to the element instead of the traced down one (multiplied with the original identity matrix)
         const transform = opts.keepGroupTransforms ? localMatrix : currMatrix;
         // If the groups are keeping their transforms, we should apply the localized clip path to the element instead of the traced down one
         const clipPath = opts.keepGroupTransforms ? localizedClipPath : tracingClipPath;
-        if (element.nodeName === 'rect') {
+        const simpleClipPath = opts.keepGroupTransforms ? localizedSimpleClipPath : tracingSimpleClipPath ? new SVGPathCommander(tracingSimpleClipPath.toString()) : undefined;
+
+        const colorMatrix = combineColorMatrices(tracingColorMatrixes);
+
+        // Masked return
+        if (opts.rasterizeAllMasks && mask) {
+          return {
+            type: 'image',
+            attributes: {
+              x: mask.left,
+              y: mask.top,
+              width: mask.width,
+              height: mask.height,
+              href: `data:image/png;base64,${arrayBufferToBase64(mask.buffer)}`,
+              //'data-rasterized-mask': 'true',
+            },
+            style: {},
+            mask: undefined,
+            clipPath,
+            simpleClipPath,
+            transform,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
+          };
+        } else if (element.nodeName === 'rect') {
           const rect = element as SVGRectElement;
           const attributes = getElementAttributes(rect, ['style']);
           const style = getElementStyle(rect);
@@ -174,7 +436,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'ellipse') {
           const ellipse = element as SVGEllipseElement;
@@ -186,7 +453,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'circle') {
           const circle = element as SVGCircleElement;
@@ -204,7 +476,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'path') {
           const path = element as SVGPathElement;
@@ -216,7 +493,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'line') {
           const line = element as SVGLineElement;
@@ -228,7 +510,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'polygon') {
           const polygon = element as SVGPolygonElement;
@@ -240,7 +527,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'polyline') {
           const polyline = element as SVGPolylineElement;
@@ -252,7 +544,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'image') {
           const image = element as SVGImageElement;
@@ -264,7 +561,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             style,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else if (element.nodeName === 'text') {
           const text = element as SVGTextElement;
@@ -279,7 +581,12 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
             nodes,
             transform,
             clipPath,
+            simpleClipPath,
             mask,
+            colorMatrix,
+            opacity: tracingOpacity,
+            blurs: tracingBlurs,
+            dropShadow,
           };
         } else {
           return undefined;
@@ -292,21 +599,40 @@ function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTr
 export type FlattenSimpleSVGOptions = {
   clipPathAfterElementTranform?: boolean;
 };
+export const IdentityMatrix = [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0];
 function flattenSimpleElement(element: SimpleElement): ElementNode[] {
   const is0Matrix = element.transform.equals(new paper.Matrix());
+  const is0Filter = element.type !== 'group' ? element.colorMatrix.every((v, i) => IdentityMatrix[i] === v) : true;
+
   const transformMatrix = !is0Matrix ? `matrix(${element.transform.a}, ${element.transform.b}, ${element.transform.c}, ${element.transform.d}, ${element.transform.tx}, ${element.transform.ty})` : undefined;
   const clipPathId = getUniqueID();
   const maskId = getUniqueID();
+  const filterId = getUniqueID();
+
+  const dropShadowFilter = element.dropShadow
+    ? makeElementNode('filter', { id: filterId, filterUnits: 'userSpaceOnUse' }, [
+        makeElementNode('feDropShadow', {
+          in: 'SourceGraphic',
+          stdDeviation: element.dropShadow.stdDeviation,
+          dx: element.dropShadow.dx,
+          dy: element.dropShadow.dy,
+          floodColor: element.dropShadow.floodColor,
+          floodOpacity: element.dropShadow.floodOpacity.toString(),
+        }),
+      ])
+    : undefined;
+
   const clipPathDefs = (() => {
     if (element.type !== 'group' && (element.clipPath || element.mask)) {
       const matrix = element.transform.clone().invert();
       element.clipPath?.transform(matrix);
+      const newSimpleClipPath = element.simpleClipPath ? transformPath(element.simpleClipPath, matrix) : undefined;
       return makeElementNode('defs', {}, [
         ...(element.clipPath
           ? [
               makeElementNode('clipPath', { id: clipPathId }, [
                 makeElementNode('path', {
-                  d: element.clipPath.pathData,
+                  d: newSimpleClipPath ? newSimpleClipPath.toString() : element.clipPath.pathData,
                 }),
               ]),
             ]
@@ -325,20 +651,48 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
               ]),
             ]
           : []),
+        ...((element.colorMatrix.length > 0 && !is0Filter) || element.blurs.length > 0 || element.dropShadow
+          ? [
+              makeElementNode('filter', { id: filterId }, [
+                ...(element.colorMatrix.length > 0 && !is0Filter
+                  ? [
+                      makeElementNode('feColorMatrix', {
+                        type: 'matrix',
+                        values: element.colorMatrix.join(' '),
+                      }),
+                    ]
+                  : []),
+                ...(element.blurs.length > 0
+                  ? [
+                      makeElementNode('feGaussianBlur', {
+                        in: 'SourceGraphic',
+                        stdDeviation: combineBlurs(element.blurs).join(' '),
+                      }),
+                    ]
+                  : []),
+                ...(dropShadowFilter ? [dropShadowFilter] : []),
+              ]),
+            ]
+          : []),
       ]);
+    } else {
+      if (dropShadowFilter) {
+        return makeElementNode('defs', {}, [dropShadowFilter]);
+      }
     }
   })();
   const baseElements = (() => {
     if (element.type === 'group') {
       const childElements = flattenSimpleElements(element.children);
-      if (is0Matrix) {
+
+      if (is0Matrix && !element.keep && !dropShadowFilter) {
         return childElements;
       }
       return [
         makeElementNode(
           'g',
           {
-            style: createInlineStyle({ transform: transformMatrix }),
+            style: transformMatrix || dropShadowFilter ? createInlineStyle({ transform: transformMatrix, filter: dropShadowFilter ? `url('#${filterId}')` : undefined }) : undefined,
           },
           childElements
         ),
@@ -362,6 +716,8 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
               transform: transformMatrix,
               'clip-path': element.clipPath ? `url('#${clipPathId}')` : undefined,
               mask: element.mask ? `url('#${maskId}')` : undefined,
+              filter: (element.colorMatrix.length > 0 && !is0Filter) || element.blurs.length > 0 || dropShadowFilter ? `url('#${filterId}')` : undefined,
+              opacity: element.opacity.toString(),
             }),
           },
           children
@@ -392,8 +748,11 @@ This method simplifies an SVG by doing the following:
 export async function simplifySVG(
   document: Document,
   opts: {
+    rasterizeAllMasks: boolean;
     keepGroupTransforms: boolean;
+    vectorizeAllTexts: boolean;
     rasterize?: RasterizeFunction;
+    applyColorMatrix?: (data: ArrayBuffer, matrix: number[]) => ArrayBuffer;
   }
 ) {
   const svg = document.querySelector('svg')!;
@@ -401,93 +760,44 @@ export async function simplifySVG(
   const gradients = getAllGlobalGradients(svg);
   const styles = getAllGlobalStyles(svg);
 
+  console.time('text-to-path');
+
   // We cannot merge texts in clip paths, so we have to convert them to paths
-  for (const textElement of svg.querySelectorAll('clipPath text') as NodeListOf<SVGTextElement>) {
+  for (const textElement of svg.querySelectorAll(opts.vectorizeAllTexts ? 'text' : 'clipPath text, mask text') as NodeListOf<SVGTextElement>) {
     const { paths, text } = await textElementToPath(textElement, svg);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('data-keep', 'true');
+    g.setAttribute('class', 'text-element');
+
     g.setAttribute('data-text', text);
-    const allPaths = paths.flat();
+    const allPaths = paths.map((p) => p.paths.map((path) => ({ style: p.style, path }))).flat();
 
-    let anyIntersection = false;
-    const singlePath = allPaths.slice(1).reduce((accD, path) => {
-      const d = path.toString();
-      if (intersect(accD, d).length > 0) {
-        anyIntersection = true;
-      }
-      accD = accD.replace(/Z/g, '');
-      return `${accD} ${d}`;
-    }, allPaths[0].toString());
+    // let anyIntersection = false;
+    // const singlePath = allPaths.slice(1).reduce((accD, path) => {
+    //   const d = path.toString();
+    //   if (intersect(accD, d).length > 0) {
+    //     anyIntersection = true;
+    //   }
+    //   accD = accD.replace(/Z/g, '');
+    //   return `${accD} ${d}`;
+    // }, allPaths[0].toString());
 
-    for (const path of allPaths) {
+    for (const { path, style } of allPaths) {
       const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       pathElement.setAttribute('d', path.toString());
+      if (style) pathElement.setAttribute('style', style);
       g.appendChild(pathElement);
     }
-
-    //console.log('SINGLE PATH', singlePath);
-
-    // if (anyIntersection) {
-    //   for (const path of allPaths) {
-    //     const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    //     pathElement.setAttribute('d', path.toString());
-    //     g.appendChild(pathElement);
-    //   }
-    // } else {
-    //   const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    //   pathElement.setAttribute('d', singlePath);
-    //   g.appendChild(pathElement);
-    // }
-
-    // for (const path of allPaths) {
-    //   const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    //   pathElement.setAttribute('d', path.toString());
-    //   g.appendChild(pathElement);
-    // }
-
-    // const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    // pathElement.setAttribute('data-text', text);
-    // pathElement.setAttribute('d', paths.map((path) => path.toString()).join(' '));
-    // textGroups.push(pathElement);
-    console.log('!!!', text, anyIntersection);
 
     textElement.replaceWith(g);
   }
 
-  // // We do not support multi-paths with Z inside for clipPaths, so we have to convert them to single paths
-  // const pathsInsideCipPath = svg.querySelectorAll('clipPath path') as NodeListOf<SVGPathElement>;
-  // for (const multiPathInsideClipPath of pathsInsideCipPath) {
-  //   const d = multiPathInsideClipPath.getAttribute('d');
-  //   if (!d) {
-  //     continue;
-  //   }
-  //   const subPaths = mergeSeperatePathsBackIfTheyOverlap(getSeperatePaths(d));
+  console.timeEnd('text-to-path');
 
-  //   if (subPaths.length >= 2) {
-  //     const newPaths = subPaths.map((d) => {
-  //       const newNode = multiPathInsideClipPath.cloneNode(false) as SVGPathElement;
-  //       newNode.setAttribute('d', d);
-  //       return newNode;
-  //     });
-  //     multiPathInsideClipPath.replaceWith(...newPaths);
-  //   }
-  // }
-
-  const textGroups: SVGGElement[] = [];
-
-  // for (const textElement of svg.querySelectorAll('text.text-to-path') as NodeListOf<SVGTextElement>) {
-  //   console.log('text-to-path', textElement);
-  //   const { paths, text } = await textElementToPath(textElement, svg);
-  //   const newPathElements = paths.flat().map((path) => {
-  //     const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  //     pathElement.setAttribute('data-text', text);
-  //     pathElement.setAttribute('d', path.toString());
-  //     return pathElement;
-  //   });
-  //   textElement.replaceWith(...newPathElements);
-  // }
-
-  const elements = simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, [], {
+  const elements = simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, undefined, [], [], 1, [], [], {
     keepGroupTransforms: opts.keepGroupTransforms,
+    rasterizeAllMasks: opts.rasterizeAllMasks,
+    applyColorMatrix: opts.applyColorMatrix,
     rasterize: opts.rasterize,
   });
 
@@ -497,7 +807,7 @@ export async function simplifySVG(
       xmlns: 'http://www.w3.org/2000/svg',
       viewBox: svg.getAttribute('viewBox') ?? undefined,
     },
-    [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements), ...textGroups.map(nodeToNode)]
+    [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements)]
   );
 
   return parseXML(stringifyNode(newSVG)) as any as SVGSVGElement;

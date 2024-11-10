@@ -1,6 +1,7 @@
 import { ICSSFunction, ICSSPrimitive, parse as parseCSSExpression } from 'css-expression';
 import parseInlineStyle, { Declaration } from 'inline-style-parser';
 import * as changeCase from 'change-case';
+import { Blur } from '../main';
 
 export type PartialTransform = Partial<{
   translate: [number, number];
@@ -34,6 +35,48 @@ export function ensureCSSValue(value: string | undefined) {
   }
   const num = Number(value.replace(/[^0-9.-]/g, ''));
   return isNaN(num) ? 0 : num;
+}
+
+export function getEleentOpacity(element: Element) {
+  const opacityAttr = ensureNumber(element.getAttribute('opacity') ?? undefined) ?? 1;
+  const styleAttr = element.getAttribute('style');
+  const style = parseInlineStyle(styleAttr ?? '');
+  const opacityDeclaration = style.find((entry) => entry.type === 'declaration' && entry.property === 'opacity') as Declaration | undefined;
+  const cssOpacity = ensureNumber(opacityDeclaration?.value);
+  if (cssOpacity) {
+    return cssOpacity;
+  } else {
+    return opacityAttr;
+  }
+}
+
+export function getElementBlur(element: Element, svg: SVGSVGElement): Blur | undefined {
+  const filter = getElementFilter(element);
+  if (!filter) {
+    return;
+  }
+  const filterElement = svg.getElementById(filter.slice(1));
+  if (!filterElement) {
+    return;
+  }
+  const feGaussianBlur = svg.querySelector('feGaussianBlur');
+  if (!feGaussianBlur) {
+    return;
+  }
+  const stdDeviationBaseValue = (feGaussianBlur.getAttribute('stdDeviation') ?? '0')
+    .split(' ')
+    .map(ensureNumber)
+    .filter((v) => v !== undefined);
+  const stdDeviationX = stdDeviationBaseValue[0];
+  const stdDeviationY = stdDeviationBaseValue[1] ?? stdDeviationX;
+
+  return {
+    stdDeviation: [stdDeviationX, stdDeviationY],
+  };
+
+  return {
+    stdDeviation: [0, 0],
+  };
 }
 
 export function getSVGValue(element: Element, propertyName: string) {
@@ -74,7 +117,11 @@ export function getElementMask(element: Element) {
   return getSVGUrlValue(element, 'mask');
 }
 
-export function getTransformationsInOrder(element: Element): Partial<PartialTransform>[] {
+export function getElementFilter(element: Element) {
+  return getSVGUrlValue(element, 'filter');
+}
+
+export function getTransformationsInOrder(element: Element): PartialTransform[] {
   const styleAttrStr = element.getAttribute('style');
   const inlineStyleEntries = styleAttrStr ? parseInlineStyle(styleAttrStr) : undefined;
 
@@ -173,4 +220,40 @@ export function createInlineStyle(values: { [k: string]: string | undefined }) {
 
 export function extractCSSString(value: string) {
   return value.startsWith(`'`) || value.startsWith(`"`) ? value.slice(1, -1) : value;
+}
+
+export type DropShadow = {
+  dx: number;
+  dy: number;
+  stdDeviation: number;
+  floodColor: string;
+  floodOpacity: number;
+};
+
+export function getElementDropShadow(element: Element, svg: SVGSVGElement): DropShadow | undefined {
+  const filter = getElementFilter(element);
+  if (!filter) {
+    return;
+  }
+  const filterElement = svg.getElementById(filter.slice(1));
+  if (!filterElement) {
+    return;
+  }
+  const feDropShadow = filterElement.querySelector('feDropShadow');
+  if (!feDropShadow) {
+    return;
+  }
+  const dx = ensureNumber(feDropShadow.getAttribute('dx') ?? '0') ?? 0;
+  const dy = ensureNumber(feDropShadow.getAttribute('dy') ?? '0') ?? 0;
+  const stdDeviation = ensureNumber(feDropShadow.getAttribute('stdDeviation') ?? '0') ?? 0;
+  const floodColor = feDropShadow.getAttribute('flood-color') ?? 'black';
+  const floodOpacity = ensureNumber(feDropShadow.getAttribute('flood-opacity') ?? '1') ?? 1;
+
+  return {
+    dx,
+    dy,
+    stdDeviation,
+    floodColor,
+    floodOpacity,
+  };
 }

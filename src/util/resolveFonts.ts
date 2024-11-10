@@ -70,11 +70,22 @@ function isCharInRange(charCode: number, range: string): boolean {
   return false;
 }
 
+export function textIsInUnicodeRange(text: string, unicodeRange: string): boolean {
+  for (const char of text) {
+    const charCode = char.codePointAt(0);
+    if (charCode !== undefined && isCharInRange(charCode, unicodeRange)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function getCharRangeRelevantFontDeclarations(text: string, declarations: FontDeclaration[]): FontDeclaration[] {
   return declarations.filter((declaration) => {
     if (!declaration.unicodeRange) {
       return true;
     }
+    // return textIsInUnicodeRange(text, declaration.unicodeRange);
     // Prüfe für jedes Zeichen im Text, ob es in den unicodeRange der Deklaration passt
     for (const char of text) {
       const charCode = char.codePointAt(0);
@@ -142,9 +153,17 @@ export function getAllFontDeclarations(cssData: string) {
         }
       })();
 
-      const srcExpr = parseCSSExpression(srcValue);
-      const srcFunctions = srcExpr.literals.filter((literal) => literal.type === 'function') as ICSSFunction[];
-      const src = extractCSSString(srcFunctions.find((func) => func.name === 'url')?.args[0]?.raw ?? '');
+      const src = (() => {
+        const [urlExprRaw] = srcValue.match(/url\(([^)]+)\)/) ?? [];
+        if (urlExprRaw) {
+          const urlValue = urlExprRaw.slice(4, -1);
+          if (urlValue.startsWith('"') || urlValue.startsWith("'")) {
+            return urlValue.slice(1, -1);
+          } else {
+            return urlValue;
+          }
+        }
+      })();
 
       return {
         fontFamily: extractCSSString(fontFamily),
