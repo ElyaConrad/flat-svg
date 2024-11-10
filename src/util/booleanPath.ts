@@ -110,39 +110,6 @@ export function getPaperPathItem(element: SVGShapeOrGroup): paper.PathItem {
       const d = element.getAttribute('d') ?? '';
 
       return new paper.Path(d);
-
-      // const [mainPath, ...subPaths] = getSeperatePaths(d);
-      // const rootPath = new paper.Path(mainPath);
-
-      // // console.log('root', rootPath.pathData);
-
-      // // // const alternativeSubPaths = [new paper.Path(`M 160,120 L 170,120 170,130 160,130`)];
-
-      // // rootPath.exclude(new paper.Path(`M 160,120 L 170,120 170,130 160,130`));
-
-      // // return rootPath;
-
-      // const mergedPath = subPaths.reduce((acc, subPath) => {
-      //   const path = new paper.Path(subPath);
-      //   path.exclude(acc);
-      //   return acc.clone({ insert: false });
-      // }, rootPath);
-
-      // return new paper.Path(mergedPath.pathData);
-
-      // if (subPaths.length === 0) {
-      //   return new paper.Path(mainPath);
-      // } else {
-      //   const mainPathInstance = new paper.Path(mainPath);
-      //   const secondPath = new paper.Path(subPaths[0]);
-
-      //   secondPath.exclude(mainPathInstance);
-      //   return secondPath;
-      //   return subPaths.reduce((acc, subPath) => {
-      //     acc.subtract(new paper.Path(subPath));
-      //     return acc;
-      //   }, mainPathInstance);
-      // }
     } else if (element.nodeName === 'line') {
       const { x1, y1, x2, y2 } = getAttrs(element, { x1: Number, y1: Number, x2: Number, y2: Number });
       return new paper.Path.Line(new paper.Point(x1, y1), new paper.Point(x2, y2));

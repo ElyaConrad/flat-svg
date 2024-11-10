@@ -1,9 +1,27 @@
-// @ts-expect-error well
-import * as a from '@js-bits/dom-parser';
+// // @ts-expect-error well
+// import * as a from '@js-bits/dom-parser';
 import xmlFormat from 'xml-formatter';
 
-export function parseXML(str: string): ReturnType<typeof a> {
-  return (a as any).default(str);
+// export function parseXML(str: string): ReturnType<typeof a> {
+//   return (a as any).default(str);
+// }
+const isNode = typeof window === 'undefined';
+let __JSDOM__: any;
+export async function preloadJSDOM() {
+  if (isNode) {
+    __JSDOM__ = await import('jsdom');
+  }
+}
+
+export function parseDOM(str: string, contentType: DOMParserSupportedType) {
+  if (isNode) {
+    const { JSDOM } = __JSDOM__;
+    const dom = new JSDOM(str, { pretendToBeVisual: true, contentType });
+    return dom.window.document as Document;
+  } else {
+    const parser = new DOMParser();
+    return parser.parseFromString(str, contentType);
+  }
 }
 
 export type XMLDocumentExport = {

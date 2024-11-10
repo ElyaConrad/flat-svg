@@ -1,7 +1,7 @@
-import formatXml from 'xml-formatter';
 import { ensureNumber, getElementFilter, getUniqueID, IdentityMatrix, SimpleElementShape } from '../main.js';
-import { JSDOM } from 'jsdom';
 import { arrayBufferToBase64 } from './arrayBuffer.js';
+
+import { parseDOM } from './xml.js';
 
 export type RasterImage = {
   left: number;
@@ -153,8 +153,6 @@ export function rasterizeFilteredElements(elements: NodeListOf<Element>, svg: SV
         continue;
       }
 
-      console.log('colorMatrices', element.nodeName, colorMatrices, combineColorMatrices(colorMatrices));
-
       const newBuffer = applyColorMatrix(rasteredResult.buffer, combineColorMatrices(colorMatrices));
       const newImage = document.createElementNS('http://www.w3.org/2000/svg', 'image');
       newImage.setAttribute('x', rasteredResult.left.toString());
@@ -168,10 +166,7 @@ export function rasterizeFilteredElements(elements: NodeListOf<Element>, svg: SV
 }
 
 export function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, currMatrix: paper.Matrix, rasterize: RasterizeFunction, applyColorMatrix: ApplyColorMatrixFunction | undefined, content: string) {
-  const { document } = new JSDOM(rootSVG.outerHTML, {
-    pretendToBeVisual: true,
-    contentType: 'image/svg+xml',
-  }).window;
+  const document = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
 
   const svg = document.querySelector('svg') as SVGSVGElement;
 
@@ -249,11 +244,7 @@ export function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, currMatr
 }
 
 export function rasterizeElement(element: Element, rootSVG: SVGSVGElement, rasterize: RasterizeFunction) {
-  const { document } = new JSDOM(rootSVG.outerHTML, {
-    pretendToBeVisual: true,
-    contentType: 'image/svg+xml',
-  }).window;
-
+  const document = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
   const svg = document.querySelector('svg') as SVGSVGElement;
 
   const allVisibleElements = Array.from(document.querySelectorAll('*')).filter((element) => element.closest('defs') === null);

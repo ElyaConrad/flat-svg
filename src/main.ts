@@ -1,14 +1,13 @@
 import paper from 'paper';
-import xmlFormat from 'xml-formatter';
 import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementFilter, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
-import { ElementNode, makeElementNode, nodeToNode, parseXML, stringifyNode, XMLNode } from './util/xml.js';
+import { ElementNode, makeElementNode, nodeToNode, parseDOM, preloadJSDOM, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
 import { getClipPath, getSimpleClipPath } from './util/clipPath.js';
 import { ApplyColorMatrixFunction, ColorMatrix, combineColorMatrices, getElementColorMatrices, RasterImage, rasterizeElement, RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
 import { arrayBufferToBase64 } from './util/arrayBuffer.js';
 import { textElementToPath } from './util/textToPath.js';
 import { applyToPoint, fromObject } from 'transformation-matrix';
-import SVGPathCommander, { PathArray, PathSegment } from 'svg-path-commander';
+import SVGPathCommander, { PathSegment } from 'svg-path-commander';
 
 export * from './util/css.js';
 export * from './util/xml.js';
@@ -18,6 +17,8 @@ export * from './util/booleanPath.js';
 export * from './util/cleanupBluepic.js';
 
 paper.setup(new paper.Size(1080, 1080));
+
+// console.log('PAPER SETUP', paper);
 
 export type StdDeviation = [number, number];
 export type Blur = {
@@ -760,10 +761,13 @@ export async function simplifySVG(
   const gradients = getAllGlobalGradients(svg);
   const styles = getAllGlobalStyles(svg);
 
+  // Just to make sure we have a JSDOM instance ready that will be uased instead of the browser's DOMParser
+  await preloadJSDOM();
+
   console.time('text-to-path');
 
   // We cannot merge texts in clip paths, so we have to convert them to paths
-  for (const textElement of svg.querySelectorAll(opts.vectorizeAllTexts ? 'text' : 'clipPath text, mask text') as NodeListOf<SVGTextElement>) {
+  for (const textElement of Array.from(svg.querySelectorAll(opts.vectorizeAllTexts ? 'text' : 'clipPath text, mask text') as NodeListOf<SVGTextElement>)) {
     const { paths, text } = await textElementToPath(textElement, svg);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('data-keep', 'true');
@@ -810,5 +814,5 @@ export async function simplifySVG(
     [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements)]
   );
 
-  return parseXML(stringifyNode(newSVG)) as any as SVGSVGElement;
+  return parseDOM(stringifyNode(newSVG), 'image/svg+xml').querySelector('svg')!;
 }
