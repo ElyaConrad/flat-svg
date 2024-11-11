@@ -1,6 +1,5 @@
-import { TransformObject } from 'svg-path-commander';
-import { comboundPaths, getShapeElementsAndGroupsAndPaths, SVGShape } from './booleanPath.js';
-import { ensureNumber, getTransformationsInOrder, getTransformOrigin, PartialTransform, TransformWithOrigin } from './css.js';
+import { comboundPaths, getShapeElementsAndGroupsAndPaths } from './booleanPath.js';
+import { ensureNumber, getTransformationsInOrder, getTransformOrigin, TransformWithOrigin } from './css.js';
 import SVGPathCommander from 'svg-path-commander';
 import intersect from 'path-intersection';
 
@@ -15,6 +14,17 @@ export function getClipPath(selector: string, svg: SVGSVGElement) {
 
   return comboundPaths(Array.from(clipPathElement.children));
 }
+// export function getClipPathV2(selector: string, svg: SVGSVGElement) {
+//   const element = svg.getElementById(selector.slice(1));
+//   if (!element || element.nodeName !== 'clipPath') {
+//     return undefined;
+//   }
+//   const clipPathElement = element as SVGClipPathElement;
+
+//   //const shapes = Array.from(clipPathElement.querySelectorAll('circle, rect, polygon, polyline, ellipse, path, line'));
+
+//   return comboundPathsV2(Array.from(clipPathElement.children));
+// }
 
 function collectShapes(element: SVGClipPathElement | SVGGElement, transforms: TransformWithOrigin[]): SVGPathCommander[] {
   const shapes = getShapeElementsAndGroupsAndPaths(element.children);

@@ -1,17 +1,13 @@
 import paper from 'paper';
-import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementFilter, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
+import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
 import { ElementNode, makeElementNode, nodeToNode, parseDOM, preloadJSDOM, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
 import { getClipPath, getSimpleClipPath } from './util/clipPath.js';
 import { ApplyColorMatrixFunction, ColorMatrix, getElementColorMatrices, RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
 import { arrayBufferToBase64 } from './util/arrayBuffer.js';
 import { textElementToPath } from './util/textToPath.js';
-import { applyToPoint, fromObject } from 'transformation-matrix';
-import SVGPathCommander, { PathSegment } from 'svg-path-commander';
-
-import { Path2D, PathOp } from '@napi-rs/canvas';
-
-console.log('Path2D', Path2D);
+import SVGPathCommander from 'svg-path-commander';
+import { transformPath } from './main.js';
 
 export * from './util/css.js';
 export * from './util/xml.js';
@@ -20,10 +16,6 @@ export * from './util/clipPath.js';
 export * from './util/booleanPath.js';
 export * from './util/cleanupBluepic.js';
 export * from './util/rasterize.js';
-
-paper.setup(new paper.Size(1080, 1080));
-
-// console.log('PAPER SETUP', paper);
 
 export type StdDeviation = [number, number];
 export type Blur = {
@@ -149,131 +141,6 @@ function decomposeMatrix(matrix: paper.Matrix) {
     scale,
     skew,
   };
-}
-
-function transformPath(path: SVGPathCommander, matrix: paper.Matrix) {
-  const { a, b, c, d, tx, ty } = matrix;
-
-  const absolutePath = path.toAbsolute();
-
-  const _matrix = fromObject({ a, b, c, d, e: tx, f: ty });
-
-  let lastPoint = { x: 0, y: 0 };
-  const segments = absolutePath.segments.map((segment, index) => {
-    const lastSegment = absolutePath.segments[index - 1] as PathSegment | undefined;
-    const [command] = segment;
-
-    if (command === 'M' || command === 'L') {
-      const [, ...coords] = segment;
-      const point = { x: coords[0], y: coords[1] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedPoint = applyToPoint(_matrix, point);
-      return [command, transformedPoint.x, transformedPoint.y];
-    } else if (command === 'H') {
-      const [, ...coords] = segment;
-      const point = { x: coords[0], y: lastPoint.y };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['L', transformedPoint.x, transformedPoint.y];
-    } else if (command === 'V') {
-      const [, ...coords] = segment;
-      const point = { x: lastPoint.x, y: coords[0] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['L', transformedPoint.x, transformedPoint.y];
-    } else if (command === 'C') {
-      const [, ...coords] = segment;
-      const controlPoint1 = { x: coords[0], y: coords[1] };
-      const controlPoint2 = { x: coords[2], y: coords[3] };
-      const point = { x: coords[4], y: coords[5] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedControlPoint1 = applyToPoint(_matrix, controlPoint1);
-      const transformedControlPoint2 = applyToPoint(_matrix, controlPoint2);
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['C', transformedControlPoint1.x, transformedControlPoint1.y, transformedControlPoint2.x, transformedControlPoint2.y, transformedPoint.x, transformedPoint.y];
-    } else if (command === 'S') {
-      const [, ...coords] = segment;
-      const controlPoint2 = { x: coords[0], y: coords[1] };
-      const point = { x: coords[2], y: coords[3] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedControlPoint2 = applyToPoint(_matrix, controlPoint2);
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['S', transformedControlPoint2.x, transformedControlPoint2.y, transformedPoint.x, transformedPoint.y];
-    } else if (command === 'T') {
-      const [, ...coords] = segment;
-      const point = { x: coords[0], y: coords[1] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['T', transformedPoint.x, transformedPoint.y];
-    } else if (command === 'Q') {
-      const [, ...coords] = segment;
-      const controlPoint = { x: coords[0], y: coords[1] };
-      const point = { x: coords[2], y: coords[3] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedControlPoint = applyToPoint(_matrix, controlPoint);
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['Q', transformedControlPoint.x, transformedControlPoint.y, transformedPoint.x, transformedPoint.y];
-    } else if (command === 'A') {
-      const [, ...coords] = segment;
-      const rx = coords[0];
-      const ry = coords[1];
-      const xAxisRotation = coords[2];
-      const largeArcFlag = coords[3];
-      const sweepFlag = coords[4];
-      const point = { x: coords[5], y: coords[6] };
-      lastPoint = { x: point.x, y: point.y };
-      const transformedPoint = applyToPoint(_matrix, point);
-      return ['A', rx, ry, xAxisRotation, largeArcFlag, sweepFlag, transformedPoint.x, transformedPoint.y];
-    } else if (command === 'Z') {
-      return [command];
-    } else {
-      throw new Error('Invalid command');
-    }
-  }) as PathSegment[];
-
-  const newD = segments
-    .map((segment) => {
-      const [command] = segment;
-      switch (command) {
-        case 'L':
-        case 'M':
-          return `${command} ${segment[1]},${segment[2]}`;
-        case 'V':
-          return `${command} ${segment[1]}`;
-        case 'H':
-          return `${command} ${segment[1]}`;
-        case 'C':
-          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]} ${segment[5]},${segment[6]}`;
-        case 'S':
-          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]}`;
-        case 'Q':
-          return `${command} ${segment[1]},${segment[2]} ${segment[3]},${segment[4]}`;
-        case 'T':
-          return `${command} ${segment[1]},${segment[2]}`;
-        case 'A':
-          return `${command} ${segment[1]},${segment[2]} ${segment[3]} ${segment[4]} ${segment[5]} ${segment[6]},${segment[7]}`;
-        case 'Z':
-          return `${command}`;
-        default:
-          throw new Error('Invalid command');
-      }
-    })
-    .join(' ');
-
-  return new SVGPathCommander(newD);
-}
-
-export function pathUnite(pathA: SVGPathCommander, pathB: SVGPathCommander) {
-  const path2dA = new Path2D(pathA.toString());
-  const path2dB = new Path2D(pathB.toString());
-
-  return new SVGPathCommander(path2dA.op(path2dB, PathOp.Union).toSVGString());
-}
-export function pathIntersect(pathA: SVGPathCommander, pathB: SVGPathCommander) {
-  const path2dA = new Path2D(pathA.toString());
-  const path2dB = new Path2D(pathB.toString());
-
-  return new SVGPathCommander(path2dA.op(path2dB, PathOp.Intersect).toSVGString());
 }
 
 async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTransformMatrix: paper.Matrix, tracingClipPath: paper.PathItem | undefined, tracingSimpleClipPath: SVGPathCommander | undefined, tracingMasks: string[], tracingColorMatrixes: number[][], tracingOpacity: number, tracingBlurs: Blur[], tracingDropShadows: DropShadow[], opts: { keepGroupTransforms: boolean; rasterize?: RasterizeFunction; applyColorMatrix?: ApplyColorMatrixFunction; rasterizeAllMasks: boolean }): Promise<SimpleElement[]> {
@@ -405,7 +272,6 @@ async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tra
               dropShadow,
             };
           } else {
-            console.log(element.nodeName, element.outerHTML.slice(0, 100), currentMasks);
             // Rasterize masks using external function
             const mask = await (async () => {
               if (currentMasks.length > 0 && opts.rasterize) {
@@ -785,6 +651,13 @@ export async function simplifySVG(
   const filters = getAllGlobalFilters(svg);
   const gradients = getAllGlobalGradients(svg);
   const styles = getAllGlobalStyles(svg);
+
+  const viewBox = (svg.getAttribute('viewBox') ?? '0 0 100 100')
+    .split(' ')
+    .map(ensureNumber)
+    .filter((v) => v !== undefined);
+
+  paper.setup(new paper.Size(viewBox[2], viewBox[3]));
 
   // Just to make sure we have a JSDOM instance ready that will be uased instead of the browser's DOMParser
   await preloadJSDOM();

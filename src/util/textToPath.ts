@@ -41,13 +41,16 @@ export function getTextFormat(text: SVGTextElement | SVGTSpanElement, inherit?: 
   const fontWeightRaw = getSVGValue(text, 'font-weight') ?? inherit?.fontWeight ?? '400';
   const fontStyleRaw = getSVGValue(text, 'font-style') ?? inherit?.fontStyle ?? 'normal';
   const fontSizeRaw = getSVGValue(text, 'font-size') ?? inherit?.fontSize ?? '12';
-  const letterSpacingRaw = getSVGValue(text, 'letter-spacing') ?? inherit?.letterSpacing ?? '1';
+  const letterSpacingRaw = getSVGValue(text, 'letter-spacing');
 
   const fontFamily = fontFamilyRaw.replace(/['"]/g, '');
   const fontWeight = ensureNumber(String(fontWeightRaw)) ?? 400;
   const fontStyle = fontStyleRaw;
   const fontSize = ensureCSSValue(String(fontSizeRaw)) ?? 12;
   const letterSpacing = (() => {
+    if (letterSpacingRaw === undefined) {
+      return inherit?.letterSpacing ?? 0;
+    }
     const relLetterSpacing = ensureNumber(String(letterSpacingRaw));
     if (relLetterSpacing !== undefined) {
       return (relLetterSpacing - 1) * fontSize;
@@ -256,19 +259,18 @@ export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGEle
 
       const glyphs = textToPath(needsSpaceAfter ? span.text + ' !' : span.text, await resolveFontFile(fontSrc), format.fontSize, format.letterSpacing, 'baseline', format.fontWeight);
 
-      const dx = span.dx ?? 0; //(span.x !== undefined ? span.x - (baseX + spanOffset) : 0);
-      const dy = span.dy ?? 0; //(span.y !== undefined ? span.y - baseY : 0);
+      const dx = span.dx ?? (span.x !== undefined ? span.x - (baseX + spanOffset) : 0);
+      const dy = span.dy ?? (span.y !== undefined ? span.y - baseY : 0);
 
       const paths = glyphs
         .map((glyph, index) => {
-          return glyph.path ? glyph.path.transform({ translate: [span.x !== undefined ? span.x : baseX + spanOffset + dx + glyph.xAdvance + index * glyph.letterSpacing, baseY + dy] }) : undefined;
+          return glyph.path ? glyph.path.transform({ translate: [baseX + dx + spanOffset + glyph.xAdvance + index * format.letterSpacing, baseY + dy] }) : undefined;
         })
         .filter((path) => path !== undefined) as SVGPathCommander[];
       const glyphBBoxes = paths.map((path) => ({ x: path.bbox.x, y: path.bbox.y, width: path.bbox.width, height: path.bbox.height })).slice(0, needsSpaceAfter ? -1 : undefined);
       const lastPath = paths[paths.length - 1];
       const secondLastPath = paths[paths.length - 2];
       const spanWidth = getBBoxesPath(glyphBBoxes).width + (needsSpaceAfter ? lastPath.bbox.x - (secondLastPath.bbox.x + secondLastPath.bbox.width) : 0);
-
       spanOffset += dx + spanWidth;
       return {
         paths: needsSpaceAfter ? paths.slice(0, -1) : paths,
