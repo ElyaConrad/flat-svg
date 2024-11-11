@@ -1,6 +1,8 @@
 // // @ts-expect-error well
 // import * as a from '@js-bits/dom-parser';
-import xmlFormat from 'xml-formatter';
+// import xmlFormat from 'xml-formatter';
+
+// const xmlFormat = (str: string, opts: any) => str;
 
 // export function parseXML(str: string): ReturnType<typeof a> {
 //   return (a as any).default(str);
@@ -42,23 +44,23 @@ export const XMLProcessingInstructionAID = {
   attributes: { style: 50, type: 'document', readerVersion: '6.0', featureSet: 257, product: '20.0(95)' },
 };
 
-function stringifyXmlProcessingInstruction({ name, attributes }: XMLProcessingInstruction) {
-  const attrStr = Object.entries(attributes)
-    .map(([key, value]) => `${key}="${value}"`)
-    .join(' ');
-  return `<?${name} ${attrStr}?>`;
-}
+// function stringifyXmlProcessingInstruction({ name, attributes }: XMLProcessingInstruction) {
+//   const attrStr = Object.entries(attributes)
+//     .map(([key, value]) => `${key}="${value}"`)
+//     .join(' ');
+//   return `<?${name} ${attrStr}?>`;
+// }
 
-export function stringifyXMLDocument(root: ElementNode, pi: XMLProcessingInstruction[], pretty = false) {
-  const docRaw = `${pi.map(stringifyXmlProcessingInstruction).join('\n')}\n${stringifyNode(root)}`;
-  if (pretty) {
-    return xmlFormat(docRaw, {
-      collapseContent: true,
-    });
-  } else {
-    return docRaw;
-  }
-}
+// export function stringifyXMLDocument(root: ElementNode, pi: XMLProcessingInstruction[], pretty = false) {
+//   const docRaw = `${pi.map(stringifyXmlProcessingInstruction).join('\n')}\n${stringifyNode(root)}`;
+//   if (pretty) {
+//     return xmlFormat(docRaw, {
+//       collapseContent: true,
+//     });
+//   } else {
+//     return docRaw;
+//   }
+// }
 
 export type ElementNode = {
   type: 'element';
@@ -108,14 +110,14 @@ export function stringifyNode(node: XMLNode): string {
   }
 }
 
-export function stringifyXML(node: XMLNode, pretty = false) {
-  if (pretty) {
-    return xmlFormat(stringifyNode(node), {
-      collapseContent: true,
-    });
-  }
-  return stringifyNode(node);
-}
+// export function stringifyXML(node: XMLNode, pretty = false) {
+//   if (pretty) {
+//     return xmlFormat(stringifyNode(node), {
+//       collapseContent: true,
+//     });
+//   }
+//   return stringifyNode(node);
+// }
 
 export function makeElementNode(tagName: string, attributes?: { [k: string]: string | number | boolean | undefined }, children?: XMLNode[]): ElementNode {
   return {

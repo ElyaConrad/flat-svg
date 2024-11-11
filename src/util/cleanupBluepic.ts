@@ -1,4 +1,5 @@
 import parseInlineStyle, { Declaration } from 'inline-style-parser';
+
 import cssGradient2SVG from 'gradient2svg';
 import { getUniqueID } from '../helpers.js';
 import { ensureNumber } from '../main.js';

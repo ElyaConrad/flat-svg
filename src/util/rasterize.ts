@@ -1,4 +1,4 @@
-import { ensureNumber, getElementFilter, getUniqueID, IdentityMatrix, SimpleElementShape } from '../main.js';
+import { ensureNumber, getElementFilter, getElementMask, getUniqueID, IdentityMatrix, SimpleElementShape } from '../main.js';
 import { arrayBufferToBase64 } from './arrayBuffer.js';
 
 import { parseDOM } from './xml.js';
@@ -12,77 +12,8 @@ export type RasterImage = {
 };
 export type ColorMatrix = number[];
 
-export type RasterizeFunction = (svg: SVGSVGElement) => RasterImage | undefined;
-export type ApplyColorMatrixFunction = (data: ArrayBuffer, matrix: ColorMatrix) => ArrayBuffer;
-
-function multiplyColorMatrices(m1: ColorMatrix, m2: ColorMatrix): ColorMatrix {
-  const result: ColorMatrix = Array(20).fill(0);
-
-  // Multipliziere Zeilen von m1 mit Spalten von m2
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 5; col++) {
-      if (col < 4) {
-        // Berechnung der Transformationswerte (RGB und Alpha)
-        result[row * 5 + col] = m1[row * 5 + 0] * m2[0 * 5 + col] + m1[row * 5 + 1] * m2[1 * 5 + col] + m1[row * 5 + 2] * m2[2 * 5 + col] + m1[row * 5 + 3] * m2[3 * 5 + col];
-      } else {
-        // Berechnung des Offsets in der letzten Spalte
-        result[row * 5 + col] = m1[row * 5 + 0] * m2[0 * 5 + col] + m1[row * 5 + 1] * m2[1 * 5 + col] + m1[row * 5 + 2] * m2[2 * 5 + col] + m1[row * 5 + 3] * m2[3 * 5 + col] + m1[row * 5 + 4]; // Addiere Offset aus m1
-      }
-    }
-  }
-
-  // Die letzte Zeile bleibt [0, 0, 0, 1, 0] für die Alpha-Komponente
-  result[15] = 0;
-  result[16] = 0;
-  result[17] = 0;
-  result[18] = 1;
-  result[19] = 0;
-
-  return result;
-}
-
-// function multiplyColorMatrices(m1: ColorMatrix, m2: ColorMatrix): ColorMatrix {
-//   const result: ColorMatrix = Array(20).fill(0);
-
-//   // Multipliziere Zeilen von m1 mit Spalten von m2
-//   for (let row = 0; row < 4; row++) {
-//     for (let col = 0; col < 5; col++) {
-//       // Berechnung für die RGB- und Alpha-Komponenten
-//       result[row * 5 + col] = m1[row * 5 + 0] * m2[0 * 5 + col] + m1[row * 5 + 1] * m2[1 * 5 + col] + m1[row * 5 + 2] * m2[2 * 5 + col] + m1[row * 5 + 3] * m2[3 * 5 + col] + (col === 4 ? m1[row * 5 + 4] + m2[row * 5 + 4] : 0); // Offsets korrekt addieren, ohne mit 255 zu multiplizieren
-//     }
-//   }
-
-//   // Die letzte Zeile bleibt [0, 0, 0, 1, 0] für die Alpha-Komponente
-//   result[15] = 0;
-//   result[16] = 0;
-//   result[17] = 0;
-//   result[18] = 1;
-//   result[19] = 0;
-
-//   return result;
-// }
-
-// function multiplyColorMatrices(m1: ColorMatrix, m2: ColorMatrix): ColorMatrix {
-//   const result: ColorMatrix = Array(20).fill(0);
-
-//   for (let row = 0; row < 4; row++) {
-//     for (let col = 0; col < 5; col++) {
-//       result[row * 5 + col] = m1[row * 5 + 0] * m2[0 * 5 + col] + m1[row * 5 + 1] * m2[1 * 5 + col] + m1[row * 5 + 2] * m2[2 * 5 + col] + m1[row * 5 + 3] * m2[3 * 5 + col] + (col === 4 ? m1[row * 5 + 4] : 0); // Addiere Offset nur in der letzten Spalte
-//     }
-//   }
-
-//   // Die letzte Zeile der Matrix ist immer [0, 0, 0, 1, 0] für die Alpha-Komponente
-//   result[15] = 0;
-//   result[16] = 0;
-//   result[17] = 0;
-//   result[18] = 1;
-//   result[19] = 0;
-
-//   return result;
-// }
-export function combineColorMatrices(matrices: ColorMatrix[]): ColorMatrix {
-  return matrices.reduce((combined, matrix) => multiplyColorMatrices(combined, matrix), [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]);
-}
+export type RasterizeFunction = (svg: SVGSVGElement) => Promise<RasterImage | undefined>;
+export type ApplyColorMatrixFunction = (data: ArrayBuffer, matrices: ColorMatrix[]) => Promise<ArrayBuffer>;
 
 type FeFunc = {
   type: string;
@@ -142,154 +73,147 @@ export function getElementColorMatrices(element: Element, svg: SVGSVGElement) {
   }
 }
 
-export function rasterizeFilteredElements(elements: NodeListOf<Element>, svg: SVGSVGElement, document: Document, applyColorMatrix: ApplyColorMatrixFunction, rasterize: RasterizeFunction) {
-  for (const element of Array.from(elements).reverse()) {
-    const colorMatrices = getElementColorMatrices(element, svg);
-
-    if (colorMatrices.length > 0) {
-      const rasteredResult = rasterizeElement(element, svg, rasterize);
-
-      if (!rasteredResult) {
-        continue;
-      }
-
-      const newBuffer = applyColorMatrix(rasteredResult.buffer, combineColorMatrices(colorMatrices));
-      const newImage = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-      newImage.setAttribute('x', rasteredResult.left.toString());
-      newImage.setAttribute('y', rasteredResult.top.toString());
-      newImage.setAttribute('width', rasteredResult.width.toString());
-      newImage.setAttribute('height', rasteredResult.height.toString());
-      newImage.setAttribute('href', `data:image/png;base64,${arrayBufferToBase64(newBuffer)}`);
-      element.replaceWith(newImage);
-    }
-  }
-}
-
-export function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, currMatrix: paper.Matrix, rasterize: RasterizeFunction, applyColorMatrix: ApplyColorMatrixFunction | undefined, content: string) {
+export async function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, currMatrix: paper.Matrix, rasterize: RasterizeFunction, applyColorMatrix: ApplyColorMatrixFunction | undefined, content: string) {
   const document = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
-
   const svg = document.querySelector('svg') as SVGSVGElement;
 
   const allVisibleElements = Array.from(document.querySelectorAll('*')).filter((element) => element.closest('defs') === null);
-  const allNaturalMasks = Array.from(document.querySelectorAll('mask, clipPath'));
-  const allNaturalFilters = Array.from(document.querySelectorAll('filter'));
-  const allNaturalGradients = Array.from(document.querySelectorAll('linearGradient, radialGradient'));
-  const allNaturalStyles = Array.from(document.querySelectorAll('style'));
+  const allDefs = Array.from(document.querySelectorAll('defs'));
 
-  for (const element of [...allVisibleElements, ...allNaturalMasks]) {
+  for (const element of [...allVisibleElements]) {
     element.remove();
   }
 
-  const globalFiltersDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalFiltersDefs.setAttribute('id', 'globalFilters');
-  svg.appendChild(globalFiltersDefs);
-
-  const globalGradientsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalGradientsDefs.setAttribute('id', 'globalGradients');
-  svg.appendChild(globalGradientsDefs);
-
-  const globalStylesDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalStylesDefs.setAttribute('id', 'globalStyles');
-  svg.appendChild(globalStylesDefs);
-
-  const globalNaturalMasksAndClipsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalNaturalMasksAndClipsDefs.setAttribute('id', 'globalNaturalMasksAndClips');
-  svg.appendChild(globalNaturalMasksAndClipsDefs);
-
-  for (const filter of allNaturalFilters) {
-    globalFiltersDefs.appendChild(filter.cloneNode(true));
+  for (const def of allDefs) {
+    svg.appendChild(def);
   }
 
-  for (const gradient of allNaturalGradients) {
-    globalGradientsDefs.appendChild(gradient.cloneNode(true));
-  }
-
-  for (const style of allNaturalStyles) {
-    globalStylesDefs.appendChild(style.cloneNode(true));
-  }
-
-  for (const mask of allNaturalMasks) {
-    globalNaturalMasksAndClipsDefs.appendChild(mask.cloneNode(true));
-  }
-
-  const globalMasksDef = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalMasksDef.setAttribute('id', 'globalMasks');
-  svg.appendChild(globalMasksDef);
+  const globalMasksDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  globalMasksDefs.setAttribute('id', 'globalMasks');
+  svg.appendChild(globalMasksDefs);
 
   let wrappingGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  const invertedMatrix = currMatrix.invert();
-  wrappingGroup.style.transform = `matrix(${invertedMatrix.a}, ${invertedMatrix.b}, ${invertedMatrix.c}, ${invertedMatrix.d}, ${invertedMatrix.tx}, ${invertedMatrix.ty})`;
-
+  wrappingGroup.setAttribute('class', 'contents-wrapper');
   svg.appendChild(wrappingGroup);
 
   for (const mask of masks) {
     const freshId = getUniqueID();
     const newMaskElement = document.createElementNS('http://www.w3.org/2000/svg', 'mask');
     newMaskElement.setAttribute('id', freshId);
-    newMaskElement.innerHTML = mask;
-    globalMasksDef.appendChild(newMaskElement);
+    newMaskElement.insertAdjacentHTML('beforeend', mask);
+    globalMasksDefs.appendChild(newMaskElement);
     const maskingGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     maskingGroup.setAttribute('style', `mask: url(#${freshId});`);
     wrappingGroup.appendChild(maskingGroup);
     wrappingGroup = maskingGroup;
   }
+  // console.log('SET CONTENT', content.slice(0, 100));
 
-  wrappingGroup.innerHTML = content;
+  const replaceElementWithColorMatricedRaster = async (element: Element) => {
+    const colorMatrices = getElementColorMatrices(element, svg);
+    if (colorMatrices.length === 0) {
+      return;
+    }
+    const rasteredResult = await rasterizeElementWithColorMatrices(element, svg, colorMatrices, rasterize, applyColorMatrix!);
+    if (rasteredResult === null) {
+      return;
+    }
+    const newImage = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    newImage.setAttribute('x', rasteredResult.left.toString());
+    newImage.setAttribute('y', rasteredResult.top.toString());
+    newImage.setAttribute('width', rasteredResult.width.toString());
+    newImage.setAttribute('height', rasteredResult.height.toString());
+    newImage.setAttribute('href', `data:image/png;base64,${arrayBufferToBase64(rasteredResult.buffer)}`);
+    element.replaceWith(newImage);
+  };
+
   if (applyColorMatrix) {
-    rasterizeFilteredElements(globalMasksDef.querySelectorAll('*'), svg, document, applyColorMatrix, rasterize);
-    //rasterizeFilteredElements(wrappingGroup.querySelectorAll('*'), svg, document, applyColorMatrix, rasterize);
+    await Promise.all(Array.from(globalMasksDefs.querySelectorAll('*')).reverse().map(replaceElementWithColorMatricedRaster));
+    await Promise.all(Array.from(wrappingGroup.querySelectorAll('*')).reverse().map(replaceElementWithColorMatricedRaster));
   }
+
+  wrappingGroup.insertAdjacentHTML('beforeend', content);
 
   return rasterize(svg);
 }
 
-export function rasterizeElement(element: Element, rootSVG: SVGSVGElement, rasterize: RasterizeFunction) {
-  const document = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
-  const svg = document.querySelector('svg') as SVGSVGElement;
+export async function rasterizeElementWithColorMatrices(element: Element, rootSVG: SVGSVGElement, colorMatrices: ColorMatrix[], rasterize: RasterizeFunction, applyColorMatrix: ApplyColorMatrixFunction) {
+  if (colorMatrices.length === 0) {
+    return null;
+  }
+  const clonedDoc = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
+  const clonedSVG = clonedDoc.querySelector('svg') as SVGSVGElement;
+  const allVisibleElements = Array.from(clonedDoc.querySelectorAll('*')).filter((element) => element.closest('defs') === null);
+  const allDefs = Array.from(clonedDoc.querySelectorAll('defs'));
+  for (const vElement of [...allVisibleElements]) {
+    vElement.remove();
+  }
+  for (const def of allDefs) {
+    clonedSVG.appendChild(def);
+  }
+  clonedSVG.insertAdjacentHTML('beforeend', element.outerHTML);
 
-  const allVisibleElements = Array.from(document.querySelectorAll('*')).filter((element) => element.closest('defs') === null);
-  const allNaturalMasks = Array.from(document.querySelectorAll('mask, clipPath'));
-  const allNaturalFilters = Array.from(document.querySelectorAll('filter'));
-  const allNaturalGradients = Array.from(document.querySelectorAll('linearGradient, radialGradient'));
-  const allNaturalStyles = Array.from(document.querySelectorAll('style'));
-
-  for (const element of [...allVisibleElements, ...allNaturalMasks]) {
-    element.remove();
+  const rasteredResult = await rasterize(clonedSVG);
+  if (!rasteredResult) {
+    return null;
   }
 
-  const globalFiltersDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalFiltersDefs.setAttribute('id', 'globalFilters');
-  svg.appendChild(globalFiltersDefs);
-
-  const globalGradientsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalGradientsDefs.setAttribute('id', 'globalGradients');
-  svg.appendChild(globalGradientsDefs);
-
-  const globalStylesDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalStylesDefs.setAttribute('id', 'globalStyles');
-  svg.appendChild(globalStylesDefs);
-
-  const globalNaturalMasksAndClipsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  globalNaturalMasksAndClipsDefs.setAttribute('id', 'globalNaturalMasksAndClips');
-  svg.appendChild(globalNaturalMasksAndClipsDefs);
-
-  for (const filter of allNaturalFilters) {
-    globalFiltersDefs.appendChild(filter.cloneNode(true));
-  }
-
-  for (const gradient of allNaturalGradients) {
-    globalGradientsDefs.appendChild(gradient.cloneNode(true));
-  }
-
-  for (const style of allNaturalStyles) {
-    globalStylesDefs.appendChild(style.cloneNode(true));
-  }
-
-  for (const mask of allNaturalMasks) {
-    globalNaturalMasksAndClipsDefs.appendChild(mask.cloneNode(true));
-  }
-
-  svg.innerHTML += element.outerHTML;
-
-  return rasterize(svg);
+  return {
+    left: rasteredResult.left,
+    top: rasteredResult.top,
+    width: rasteredResult.width,
+    height: rasteredResult.height,
+    buffer: await applyColorMatrix(rasteredResult.buffer, colorMatrices),
+  };
 }
+
+// export async function rasterizeElement(element: Element, rootSVG: SVGSVGElement, rasterize: RasterizeFunction) {
+//   const document = parseDOM(rootSVG.outerHTML, 'image/svg+xml');
+//   const svg = document.querySelector('svg') as SVGSVGElement;
+
+//   const allVisibleElements = Array.from(document.querySelectorAll('*')).filter((element) => element.closest('defs') === null);
+//   const allNaturalMasks = Array.from(document.querySelectorAll('mask, clipPath'));
+//   const allNaturalFilters = Array.from(document.querySelectorAll('filter'));
+//   const allNaturalGradients = Array.from(document.querySelectorAll('linearGradient, radialGradient'));
+//   const allNaturalStyles = Array.from(document.querySelectorAll('style'));
+
+//   for (const element of [...allVisibleElements, ...allNaturalMasks]) {
+//     element.remove();
+//   }
+
+//   const globalFiltersDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+//   globalFiltersDefs.setAttribute('id', 'globalFilters');
+//   svg.appendChild(globalFiltersDefs);
+
+//   const globalGradientsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+//   globalGradientsDefs.setAttribute('id', 'globalGradients');
+//   svg.appendChild(globalGradientsDefs);
+
+//   const globalStylesDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+//   globalStylesDefs.setAttribute('id', 'globalStyles');
+//   svg.appendChild(globalStylesDefs);
+
+//   const globalNaturalMasksAndClipsDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+//   globalNaturalMasksAndClipsDefs.setAttribute('id', 'globalNaturalMasksAndClips');
+//   svg.appendChild(globalNaturalMasksAndClipsDefs);
+
+//   for (const filter of allNaturalFilters) {
+//     globalFiltersDefs.appendChild(filter.cloneNode(true));
+//   }
+
+//   for (const gradient of allNaturalGradients) {
+//     globalGradientsDefs.appendChild(gradient.cloneNode(true));
+//   }
+
+//   for (const style of allNaturalStyles) {
+//     globalStylesDefs.appendChild(style.cloneNode(true));
+//   }
+
+//   for (const mask of allNaturalMasks) {
+//     globalNaturalMasksAndClipsDefs.appendChild(mask.cloneNode(true));
+//   }
+
+//   svg.insertAdjacentHTML('beforeend', element.outerHTML);
+
+//   return await rasterize(svg);
+// }
