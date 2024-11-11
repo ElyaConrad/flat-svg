@@ -95,6 +95,8 @@ export async function rasterizeMasks(masks: string[], rootSVG: SVGSVGElement, cu
   let wrappingGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   wrappingGroup.setAttribute('class', 'contents-wrapper');
   svg.appendChild(wrappingGroup);
+  const invertedMatrix = currMatrix.invert();
+  wrappingGroup.style.transform = `matrix(${invertedMatrix.a}, ${invertedMatrix.b}, ${invertedMatrix.c}, ${invertedMatrix.d}, ${invertedMatrix.tx}, ${invertedMatrix.ty})`;
 
   for (const mask of masks) {
     const freshId = getUniqueID();

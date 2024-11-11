@@ -9,6 +9,10 @@ import { textElementToPath } from './util/textToPath.js';
 import { applyToPoint, fromObject } from 'transformation-matrix';
 import SVGPathCommander, { PathSegment } from 'svg-path-commander';
 
+import { Path2D, PathOp } from '@napi-rs/canvas';
+
+console.log('Path2D', Path2D);
+
 export * from './util/css.js';
 export * from './util/xml.js';
 export * from './helpers.js';
@@ -259,6 +263,19 @@ function transformPath(path: SVGPathCommander, matrix: paper.Matrix) {
   return new SVGPathCommander(newD);
 }
 
+export function pathUnite(pathA: SVGPathCommander, pathB: SVGPathCommander) {
+  const path2dA = new Path2D(pathA.toString());
+  const path2dB = new Path2D(pathB.toString());
+
+  return new SVGPathCommander(path2dA.op(path2dB, PathOp.Union).toSVGString());
+}
+export function pathIntersect(pathA: SVGPathCommander, pathB: SVGPathCommander) {
+  const path2dA = new Path2D(pathA.toString());
+  const path2dB = new Path2D(pathB.toString());
+
+  return new SVGPathCommander(path2dA.op(path2dB, PathOp.Intersect).toSVGString());
+}
+
 async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tracingTransformMatrix: paper.Matrix, tracingClipPath: paper.PathItem | undefined, tracingSimpleClipPath: SVGPathCommander | undefined, tracingMasks: string[], tracingColorMatrixes: number[][], tracingOpacity: number, tracingBlurs: Blur[], tracingDropShadows: DropShadow[], opts: { keepGroupTransforms: boolean; rasterize?: RasterizeFunction; applyColorMatrix?: ApplyColorMatrixFunction; rasterizeAllMasks: boolean }): Promise<SimpleElement[]> {
   return (
     await Promise.all(
@@ -388,7 +405,7 @@ async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tra
               dropShadow,
             };
           } else {
-            // console.log(element.nodeName, element.outerHTML.slice(0, 100), currentMasks);
+            console.log(element.nodeName, element.outerHTML.slice(0, 100), currentMasks);
             // Rasterize masks using external function
             const mask = await (async () => {
               if (currentMasks.length > 0 && opts.rasterize) {

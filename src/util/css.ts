@@ -1,7 +1,7 @@
 import { ICSSFunction, ICSSPrimitive, parse as parseCSSExpression } from 'css-expression';
 import parseInlineStyle, { Declaration } from 'inline-style-parser';
 import * as changeCase from 'change-case';
-import { Blur } from '../main.js';
+import { Blur, ColorMatrix } from '../main.js';
 
 export type PartialTransform = Partial<{
   translate: [number, number];
