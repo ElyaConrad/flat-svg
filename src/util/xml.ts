@@ -6,6 +6,8 @@
 
 // export function parseXML(str: string): ReturnType<typeof a> {
 //   return (a as any).default(str);
+// // @ts-expect-error no types
+// import beautify from 'xml-beautifier';
 // }
 const isNode = typeof window === 'undefined';
 let __JSDOM__: any;
@@ -24,6 +26,10 @@ export function parseDOM(str: string, contentType: DOMParserSupportedType) {
     const parser = new DOMParser();
     return parser.parseFromString(str, contentType);
   }
+}
+
+export function parseXML(str: string) {
+  return parseDOM(str, 'image/svg+xml').documentElement;
 }
 
 export type XMLDocumentExport = {
@@ -159,4 +165,22 @@ export function domNodeToXMLNode(node: Node, skipElements: string[]) {
   }
   xmlNode.children = xmlNode.children?.filter((child) => child.type !== 'element' || !skipElements.includes(child.tagName)) ?? [];
   return xmlNode as ElementNode & { children: XMLNode[] };
+}
+
+export function stringifyXML(node: XMLNode, preprocessingInstructions: XMLProcessingInstruction[], pretty = false) {
+  const raw =
+    preprocessingInstructions
+      .map(
+        (pi) =>
+          `<?${pi.name} ${Object.entries(pi.attributes)
+            .map(([key, value]) => `${key}="${value}"`)
+            .join(' ')}?>`
+      )
+      .join('\n') +
+    '\n' +
+    stringifyNode(node);
+
+  return raw;
+
+  // return pretty ? xmlFormat(raw, { collapseContent: true }) : raw;
 }

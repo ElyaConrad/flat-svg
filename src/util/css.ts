@@ -21,12 +21,16 @@ export function ensureNumber(value: string | undefined) {
   return isNaN(num) ? undefined : num;
 }
 
-export function getElementStyle(element: Element) {
-  const styleAttr = element.getAttribute('style');
+export function getStyleObjectFromInlineStyle(styleAttr: string | null) {
   const entries = styleAttr ? parseInlineStyle(styleAttr) : [];
   const declarations = entries.filter((entry) => entry.type === 'declaration') as Declaration[];
 
   return Object.fromEntries(declarations.map((declaration) => [declaration.property, declaration.value]));
+}
+
+export function getElementStyle(element: Element) {
+  const styleAttr = element.getAttribute('style');
+  return getStyleObjectFromInlineStyle(styleAttr);
 }
 
 export function ensureCSSValue(value: string | undefined) {

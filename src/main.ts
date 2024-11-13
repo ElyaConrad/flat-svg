@@ -1,5 +1,5 @@
 import paper from 'paper';
-import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementMask, getElementStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
+import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementMask, getElementStyle, getStyleObjectFromInlineStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
 import { ElementNode, makeElementNode, nodeToNode, parseDOM, preloadJSDOM, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
 import { getClipPath, getSimpleClipPath } from './util/clipPath.js';
@@ -8,6 +8,7 @@ import { arrayBufferToBase64 } from './util/arrayBuffer.js';
 import { textElementToPath } from './util/textToPath.js';
 import SVGPathCommander from 'svg-path-commander';
 import { transformPath } from './main.js';
+import parseInlineStyle from 'inline-style-parser';
 
 export * from './util/css.js';
 export * from './util/xml.js';
@@ -666,6 +667,11 @@ export async function simplifySVG(
 
   // We cannot merge texts in clip paths, so we have to convert them to paths
   for (const textElement of Array.from(svg.querySelectorAll(opts.vectorizeAllTexts ? 'text' : 'clipPath text, mask text') as NodeListOf<SVGTextElement>)) {
+    const clipPath = getElementClipPath(textElement);
+    const mask = getElementMask(textElement);
+    if (clipPath || mask) {
+      console.log(textElement, clipPath, mask);
+    }
     const { paths, text } = await textElementToPath(textElement, svg);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('data-keep', 'true');
@@ -687,7 +693,15 @@ export async function simplifySVG(
     for (const { path, style } of allPaths) {
       const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       pathElement.setAttribute('d', path.toString());
-      if (style) pathElement.setAttribute('style', style);
+      const styleStr = createInlineStyle({
+        ...getStyleObjectFromInlineStyle(style ?? ''),
+        mask: mask ? `url('${mask}')` : undefined,
+        clipPath: clipPath ? `url('${clipPath}')` : undefined,
+      });
+      if (styleStr) {
+        pathElement.setAttribute('style', styleStr);
+      }
+
       g.appendChild(pathElement);
     }
 
