@@ -3,6 +3,103 @@ import pLimit from 'p-limit';
 import { extractCSSString } from './css.js';
 import { ICSSFunction, parse as parseCSSExpression } from 'css-expression';
 
+export function getDefaultFontFile(fontWeight: number, fontStyle: string) {
+  const defaultFonts = [
+    {
+      weight: 100,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyeMZg.ttf',
+    },
+    {
+      weight: 200,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50ojIw2boKoduKmMEVuDyfMZg.ttf',
+    },
+    {
+      weight: 300,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuOKfMZg.ttf',
+    },
+    {
+      weight: 400,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfMZg.ttf',
+    },
+    {
+      weight: 500,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuI6fMZg.ttf',
+    },
+    {
+      weight: 600,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuGKYMZg.ttf',
+    },
+    {
+      weight: 700,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZg.ttf',
+    },
+    {
+      weight: 800,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuDyYMZg.ttf',
+    },
+    {
+      weight: 900,
+      style: 'normal',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuBWYMZg.ttf',
+    },
+    {
+      weight: 100,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTc2dphjQ.ttf',
+    },
+    {
+      weight: 200,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTcWdthjQ.ttf',
+    },
+    {
+      weight: 300,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTch9thjQ.ttf',
+    },
+    {
+      weight: 400,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTc2dthjQ.ttf',
+    },
+    {
+      weight: 500,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTc69thjQ.ttf',
+    },
+    {
+      weight: 600,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTcB9xhjQ.ttf',
+    },
+    {
+      weight: 700,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTcPtxhjQ.ttf',
+    },
+    {
+      weight: 800,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnOKk4j1ebLhAm8SrXTcWdxhjQ.ttf',
+    },
+    {
+      weight: 900,
+      style: 'italic',
+      src: 'https://fonts.gstatic.com/s/inter/v18/UcCM3FwrK3iLTcvneQg7Ca725JhhKnNqk4j1ebLhAm8SrXTccNxhjQ.ttf',
+    },
+  ];
+  const font = defaultFonts.find((font) => font.weight === fontWeight && font.style === fontStyle) ?? defaultFonts.find((font) => font.weight === 400 && font.style === 'normal')!;
+  return font.src;
+}
+
 type FontWeight =
   | {
       type: 'range';
@@ -210,12 +307,14 @@ export function getFontFile(cssData: string | ArrayBuffer, fontName: string, fon
   const fontCSSRaw = typeof cssData === 'string' ? cssData : new TextDecoder('utf-8').decode(new Uint8Array(cssData));
 
   const fontDeclarations = getAllFontDeclarations(fontCSSRaw);
+
   // Get just the font declarations that are relevant for the given unicode range
   const relevantFontDeclarations = getCharRangeRelevantFontDeclarations(fontName, fontDeclarations);
 
   const declaration = findBestFontDeclaration(relevantFontDeclarations, fontName, fontWeight, fontStyle);
   if (declaration === null) {
-    throw new Error('No matching font declaration found');
+    return getDefaultFontFile(fontWeight, fontStyle);
+    //throw new Error('No matching font declaration found');
   }
 
   return declaration.src;

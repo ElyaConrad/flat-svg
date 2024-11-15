@@ -202,6 +202,8 @@ export function transformPath(path: SVGPathCommander, matrix: paper.Matrix) {
   return new SVGPathCommander(newD);
 }
 
+// import { Path2D, PathOp } from '@napi-rs/canvas';
+
 // export function pathUnite(pathA: SVGPathCommander, pathB: SVGPathCommander) {
 //   const path2dA = new Path2D(pathA.toString());
 //   const path2dB = new Path2D(pathB.toString());

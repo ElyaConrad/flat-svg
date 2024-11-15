@@ -62,8 +62,6 @@ export function getTextFormat(text: SVGTextElement | SVGTSpanElement, inherit?: 
     }
     return 0;
   })();
-  //const letterSpacing = ensureNumber(String(letterSpacingRaw).replace(/[^0-9\.]/g, '')) ?? 1;
-
   return {
     fontFamily,
     fontWeight,
