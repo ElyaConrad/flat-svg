@@ -8,7 +8,6 @@ import { arrayBufferToBase64 } from './util/arrayBuffer.js';
 import { textElementToPath } from './util/textToPath.js';
 import SVGPathCommander from 'svg-path-commander';
 import { transformPath } from './main.js';
-import parseInlineStyle from 'inline-style-parser';
 
 export * from './util/css.js';
 export * from './util/xml.js';
@@ -17,6 +16,8 @@ export * from './util/clipPath.js';
 export * from './util/booleanPath.js';
 export * from './util/cleanupBluepic.js';
 export * from './util/rasterize.js';
+export * from './util/textToPath.js';
+export * from './util/resolveFonts.js';
 
 export type StdDeviation = [number, number];
 export type Blur = {
@@ -85,7 +86,7 @@ function getAllGlobalStyles(svg: SVGSVGElement) {
   return Array.from(svg.querySelectorAll('style')).map(nodeToNode);
 }
 
-function getElementTransformationMatrix(element: Element) {
+export function getElementTransformationMatrix(element: Element) {
   const transforms = getTransformationsInOrder(element);
   const transformOrigin = getTransformOrigin(element);
   const matrix = new paper.Matrix();
@@ -103,6 +104,10 @@ function getElementTransformationMatrix(element: Element) {
     }
     if (transform.skew) {
       matrix.skew(transform.skew[0], transform.skew[1], originPoint);
+    }
+    if (transform.matrix) {
+      const currMatrix = new paper.Matrix(transform.matrix);
+      matrix.append(currMatrix);
     }
   }
   return matrix;
@@ -598,20 +603,23 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
           return [];
         }
       })();
+      //console.log(element, element.a);
+      const style = createInlineStyle({
+        ...element.style,
+        transform: transformMatrix,
+        clipPath: undefined,
+        'clip-path': element.clipPath ? `url('#${clipPathId}')` : undefined,
+        mask: element.mask ? `url('#${maskId}')` : undefined,
+        filter: (element.colorMatrices.length > 0 && !is0Filter) || element.blurs.length > 0 || dropShadowFilter ? `url('#${filterId}')` : undefined,
+        opacity: element.opacity.toString(),
+      });
 
       return [
         makeElementNode(
           element.type,
           {
             ...element.attributes,
-            style: createInlineStyle({
-              ...element.style,
-              transform: transformMatrix,
-              'clip-path': element.clipPath ? `url('#${clipPathId}')` : undefined,
-              mask: element.mask ? `url('#${maskId}')` : undefined,
-              filter: (element.colorMatrices.length > 0 && !is0Filter) || element.blurs.length > 0 || dropShadowFilter ? `url('#${filterId}')` : undefined,
-              opacity: element.opacity.toString(),
-            }),
+            style,
           },
           children
         ),
@@ -658,7 +666,7 @@ export async function simplifySVG(
     .map(ensureNumber)
     .filter((v) => v !== undefined);
 
-  paper.setup(new paper.Size(viewBox[2], viewBox[3]));
+  paper.setup(new paper.Size(viewBox[2] * 10, viewBox[3] * 10));
 
   // Just to make sure we have a JSDOM instance ready that will be uased instead of the browser's DOMParser
   await preloadJSDOM();

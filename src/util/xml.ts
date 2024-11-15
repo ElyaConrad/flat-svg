@@ -1,6 +1,6 @@
 // // @ts-expect-error well
 // import * as a from '@js-bits/dom-parser';
-// import xmlFormat from 'xml-formatter';
+import xmlFormat from 'xml-formatter';
 
 // const xmlFormat = (str: string, opts: any) => str;
 
@@ -180,7 +180,5 @@ export function stringifyXML(node: XMLNode, preprocessingInstructions: XMLProces
     '\n' +
     stringifyNode(node);
 
-  return raw;
-
-  // return pretty ? xmlFormat(raw, { collapseContent: true }) : raw;
+  return pretty ? xmlFormat(raw, { collapseContent: true }) : raw;
 }

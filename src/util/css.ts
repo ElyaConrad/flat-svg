@@ -8,6 +8,7 @@ export type PartialTransform = Partial<{
   scale: [number, number];
   rotate: number;
   skew: [number, number];
+  matrix: [number, number, number, number, number, number];
 }>;
 export type TransformWithOrigin = PartialTransform & {
   origin: [number, number];
@@ -180,9 +181,15 @@ export function getTransformationsInOrder(element: Element): PartialTransform[] 
         const b = ensureCSSValue(func.args[1]?.raw) ?? 0;
         const c = ensureCSSValue(func.args[2]?.raw) ?? 0;
         const d = ensureCSSValue(func.args[3]?.raw) ?? 1;
-        const e = ensureCSSValue(func.args[4]?.raw) ?? 0;
-        const f = ensureCSSValue(func.args[5]?.raw) ?? 0;
-        return { translate: [e, f], scale: [a, d], skew: [c, b] };
+        const tx = ensureCSSValue(func.args[4]?.raw) ?? 0;
+        const ty = ensureCSSValue(func.args[5]?.raw) ?? 0;
+        // const translate = [e, f] as [number, number];
+        // const scale = [Math.sqrt(a * a + b * b), Math.sqrt(c * c + d * d)] as [number, number];
+        // const rotate = Math.atan2(b, a) * (180 / Math.PI);
+        // const skew = [Math.atan2(-c, d) * (180 / Math.PI), Math.atan2(a, b) * (180 / Math.PI)] as [number, number];
+
+        // return { translate, scale, skew, rotate };
+        return { matrix: [a, b, c, d, tx, ty] as [number, number, number, number, number, number] };
       default:
         return {};
     }
