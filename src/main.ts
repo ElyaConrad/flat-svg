@@ -156,6 +156,10 @@ async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tra
     await Promise.all(
       elements
         .filter((element) => element.nodeName !== 'defs')
+        .filter((element) => {
+          const style = getElementStyle(element);
+          return style.display !== 'none';
+        })
         .map(async (element) => {
           const topMatrix = tracingTransformMatrix.clone();
 
@@ -308,6 +312,7 @@ async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tra
               return {
                 type: 'image',
                 attributes: {
+                  isRasterizedMask: true,
                   x: mask.left,
                   y: mask.top,
                   width: mask.width,
@@ -327,6 +332,7 @@ async function simplifyElements(elements: Element[], rootSVG: SVGSVGElement, tra
               };
             } else if (element.nodeName === 'rect') {
               const rect = element as SVGRectElement;
+
               const attributes = getElementAttributes(rect, ['style']);
               const style = getElementStyle(rect);
               return {
@@ -541,12 +547,12 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
           ? [
               makeElementNode('mask', { id: maskId }, [
                 makeElementNode('image', {
+                  'data-is-foo': 'true',
                   x: element.mask.left,
                   y: element.mask.top,
                   width: element.mask.width,
                   height: element.mask.height,
                   href: `data:image/png;base64,${arrayBufferToBase64(element.mask.buffer)}`,
-                  //style: createInlineStyle({ transform: `matrix(${element.transform.clone().invert().values.join(',')})` }),
                 }),
               ]),
             ]
@@ -605,7 +611,6 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
           return [];
         }
       })();
-      //console.log(element, element.a);
       const style = createInlineStyle({
         ...element.style,
         transform: transformMatrix,
@@ -615,7 +620,6 @@ function flattenSimpleElement(element: SimpleElement): ElementNode[] {
         filter: (element.colorMatrices.length > 0 && !is0Filter) || element.blurs.length > 0 || dropShadowFilter ? `url('#${filterId}')` : undefined,
         opacity: element.opacity.toString(),
       });
-
       return [
         makeElementNode(
           element.type,
@@ -681,7 +685,7 @@ export async function simplifySVG(
     const clipPath = getElementClipPath(textElement);
     const mask = getElementMask(textElement);
     if (clipPath || mask) {
-      console.log(textElement, clipPath, mask);
+      //console.log(textElement, clipPath, mask);
     }
     const { paths, text } = await textElementToPath(textElement, svg);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -718,8 +722,6 @@ export async function simplifySVG(
 
     textElement.replaceWith(g);
   }
-
-  console.timeEnd('text-to-path');
 
   const elements = await simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, undefined, [], [], 1, [], [], {
     keepGroupTransforms: opts.keepGroupTransforms,
