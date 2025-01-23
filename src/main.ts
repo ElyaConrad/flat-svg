@@ -669,11 +669,7 @@ export async function simplifySVG(
     .map(ensureNumber)
     .filter((v) => v !== undefined);
 
-  console.log('viewBox', viewBox);
-
   paper.setup(new paper.Size(viewBox[2] * (opts.paperInnerScale ?? 1), viewBox[3] * (opts.paperInnerScale ?? 1)));
-
-  console.log('setup complete');
 
   // Just to make sure we have a JSDOM instance ready that will be uased instead of the browser's DOMParser
   await preloadJSDOM();
