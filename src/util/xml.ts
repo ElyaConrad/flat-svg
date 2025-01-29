@@ -82,7 +82,11 @@ export type CDataNode = {
   type: 'cdata';
   data: string;
 };
-export type XMLNode = ElementNode | TextNode | CDataNode;
+export type CommentNode = {
+  type: 'comment';
+  comment: string;
+};
+export type XMLNode = ElementNode | TextNode | CDataNode | CommentNode;
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
@@ -111,6 +115,8 @@ export function stringifyNode(node: XMLNode): string {
     }
   } else if (node.type === 'cdata') {
     return `<![CDATA[${node.data}]]>`;
+  } else if (node.type === 'comment') {
+    return `<!--${node.comment}-->`;
   } else {
     return escapeText(node.text);
   }
@@ -147,14 +153,25 @@ export function getAttributes(element: Element) {
 export function nodeToNode(node: Node): XMLNode {
   if (node.nodeType === 1) {
     const element = node as Element;
-    return makeElementNode(element.tagName, getAttributes(element), Array.from(element.childNodes).map(nodeToNode));
+    return makeElementNode(
+      element.tagName,
+      getAttributes(element),
+      Array.from(element.childNodes)
+        .map(nodeToNode)
+        .filter((n) => n !== null)
+    );
   } else if (node.nodeType === 3) {
     const text = node as Text;
     return makeTextNode(text.textContent ?? '');
   } else if (node.nodeType === 4) {
     const cdata = node as CDATASection;
     return makeCDataNode(cdata.textContent ?? '');
+  } else if (node.nodeType === 8) {
+    const commentText = node.nodeValue ?? '';
+    return { type: 'comment', comment: commentText };
   } else {
+    console.log('????', node.nodeType, node);
+
     throw new Error('Unsupported node type: ' + node.nodeType);
   }
 }
