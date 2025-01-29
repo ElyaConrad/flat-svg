@@ -661,6 +661,7 @@ export async function simplifySVG(
     rasterize?: RasterizeFunction;
     applyColorMatrix?: ApplyColorMatrixFunction;
     paperInnerScale?: number;
+    noSimplify?: boolean;
   }
 ) {
   const svg = document.querySelector('svg')!;
@@ -695,16 +696,6 @@ export async function simplifySVG(
     g.setAttribute('data-text', text);
     const allPaths = paths.map((p) => p.paths.map((path) => ({ style: p.style, path }))).flat();
 
-    // let anyIntersection = false;
-    // const singlePath = allPaths.slice(1).reduce((accD, path) => {
-    //   const d = path.toString();
-    //   if (intersect(accD, d).length > 0) {
-    //     anyIntersection = true;
-    //   }
-    //   accD = accD.replace(/Z/g, '');
-    //   return `${accD} ${d}`;
-    // }, allPaths[0].toString());
-
     for (const { path, style } of allPaths) {
       const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       pathElement.setAttribute('d', path.toString());
@@ -723,21 +714,28 @@ export async function simplifySVG(
     textElement.replaceWith(g);
   }
 
-  const elements = await simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, undefined, [], [], 1, [], [], {
-    keepGroupTransforms: opts.keepGroupTransforms,
-    rasterizeAllMasks: opts.rasterizeAllMasks,
-    applyColorMatrix: opts.applyColorMatrix,
-    rasterize: opts.rasterize,
-  });
+  if (opts.noSimplify) {
+    // Just exportz the doc as a fresh one
+    const docSVG = new XMLSerializer().serializeToString(svg);
 
-  const newSVG = makeElementNode(
-    'svg',
-    {
-      xmlns: 'http://www.w3.org/2000/svg',
-      viewBox: svg.getAttribute('viewBox') ?? undefined,
-    },
-    [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements)]
-  );
+    return parseDOM(docSVG, 'image/svg+xml');
+  } else {
+    const elements = await simplifyElements(Array.from(svg.children), svg, new paper.Matrix(), undefined, undefined, [], [], 1, [], [], {
+      keepGroupTransforms: opts.keepGroupTransforms,
+      rasterizeAllMasks: opts.rasterizeAllMasks,
+      applyColorMatrix: opts.applyColorMatrix,
+      rasterize: opts.rasterize,
+    });
 
-  return parseDOM(stringifyNode(newSVG), 'image/svg+xml');
+    const newSVG = makeElementNode(
+      'svg',
+      {
+        xmlns: 'http://www.w3.org/2000/svg',
+        viewBox: svg.getAttribute('viewBox') ?? undefined,
+      },
+      [makeElementNode('defs', { class: 'styles' }, [...styles]), makeElementNode('defs', { class: 'filters' }, [...filters]), makeElementNode('defs', { class: 'gradients' }, [...gradients]), ...flattenSimpleElements(elements)]
+    );
+
+    return parseDOM(stringifyNode(newSVG), 'image/svg+xml');
+  }
 }
