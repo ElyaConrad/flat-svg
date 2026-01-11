@@ -1,7 +1,7 @@
 import css from 'css';
 import pLimit from 'p-limit';
-import { extractCSSString } from './css.js';
-import { ICSSFunction, parse as parseCSSExpression } from 'css-expression';
+import { extractCSSString } from './css';
+
 
 export function getDefaultFontFile(fontWeight: number, fontStyle: string) {
   const defaultFonts = [
@@ -303,7 +303,7 @@ export function findBestFontDeclaration(declarations: FontDeclaration[], desired
   return sortedByWeight[0] || null;
 }
 
-export function getFontFile(cssData: string | ArrayBuffer, fontName: string, fontWeight: number, fontStyle: string) {
+export function getFontDeclaration(cssData: string | ArrayBuffer, fontName: string, fontWeight: number, fontStyle: string, isDebug = false) {
   const fontCSSRaw = typeof cssData === 'string' ? cssData : new TextDecoder('utf-8').decode(new Uint8Array(cssData));
 
   const fontDeclarations = getAllFontDeclarations(fontCSSRaw);
@@ -312,10 +312,20 @@ export function getFontFile(cssData: string | ArrayBuffer, fontName: string, fon
   const relevantFontDeclarations = getCharRangeRelevantFontDeclarations(fontName, fontDeclarations);
 
   const declaration = findBestFontDeclaration(relevantFontDeclarations, fontName, fontWeight, fontStyle);
+  if (isDebug) {
+    console.log('...finding font', fontName, fontWeight, fontStyle);
+    console.log('relevantFontDeclarations', relevantFontDeclarations);
+    
+    
+    console.log('Best font declaration found:', declaration);
+  }
   if (declaration === null) {
-    return getDefaultFontFile(fontWeight, fontStyle);
+    return {
+      isDefault: true,
+      src: getDefaultFontFile(fontWeight, fontStyle)
+    };
     //throw new Error('No matching font declaration found');
   }
 
-  return declaration.src;
+  return declaration;
 }

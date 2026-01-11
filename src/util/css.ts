@@ -1,4 +1,3 @@
-import { ICSSFunction, ICSSPrimitive, parse as parseCSSExpression } from 'css-expression';
 import parseInlineStyle, { Declaration } from 'inline-style-parser';
 import * as changeCase from 'change-case';
 import { Blur, ColorMatrix } from '../main.js';
@@ -100,18 +99,15 @@ export function getSVGValue(element: Element, propertyName: string) {
   }
 }
 function getSVGUrlValue(element: Element, propertyName: string) {
-  const clipPathStr = getSVGValue(element, propertyName);
-  if (!clipPathStr) {
+  const propValStr = getSVGValue(element, propertyName);
+  if (!propValStr) {
     return undefined;
   }
-  const expr = parseCSSExpression(clipPathStr);
-  const urlFunc = expr.literals.find((literal) => literal.type === 'function' && (literal as ICSSFunction).name === 'url') as ICSSFunction | undefined;
-  if (!urlFunc) {
+  const url = propValStr.match(/url\(\s*(?:['"])?([^'")\s]+)(?:['"])?\s*\)/i)?.[1];
+  if (!url) {
     return undefined;
   }
-
-  const id = urlFunc.args[0]?.raw;
-  return id?.startsWith(`'`) || id?.startsWith(`"`) ? id.slice(1, -1) : id;
+  return url;
 }
 
 export function getElementClipPath(element: Element) {
@@ -124,6 +120,54 @@ export function getElementMask(element: Element) {
 
 export function getElementFilter(element: Element) {
   return getSVGUrlValue(element, 'filter');
+}
+function parseValueWithUnit(valueString: string): { value: number; unit: string } | null {
+  valueString = valueString.trim();
+
+  if (!valueString) {
+    return null;
+  }
+
+  // Regex für Zahlen (inkl. negativ, Dezimalzahlen, wissenschaftliche Notation)
+  // und optionale Unit
+  const valueRegex = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-zA-Z%]*)$/;
+
+  const match = valueString.match(valueRegex);
+
+  if (!match) {
+    // Wenn der Wert nicht geparst werden kann, versuche es trotzdem als Zahl
+    const numValue = parseFloat(valueString);
+    if (!isNaN(numValue)) {
+      return { value: numValue, unit: '' };
+    }
+    return null;
+  }
+
+  const value = parseFloat(match[1]);
+  const unit = match[2] || '';
+
+  if (isNaN(value)) {
+    return null;
+  }
+
+  return { value, unit };
+}
+function parseTransformValues(valuesString: string): Array<{ value: number; unit: string }> {
+  const values: Array<{ value: number; unit: string }> = [];
+
+  const parts = valuesString
+    .split(/,/)
+    .flatMap((part) => part.trim().split(/\s+/))
+    .filter((part) => part.length > 0);
+
+  for (const part of parts) {
+    const parsed = parseValueWithUnit(part);
+    if (parsed !== null) {
+      values.push(parsed);
+    }
+  }
+
+  return values;
 }
 
 export function getTransformationsInOrder(element: Element): PartialTransform[] {
@@ -145,55 +189,99 @@ export function getTransformationsInOrder(element: Element): PartialTransform[] 
   if (!transformRawValue) {
     return [];
   }
-  const expr = parseCSSExpression(transformRawValue);
-  const functions = expr.literals.filter((literal) => literal.type === 'function') as ICSSFunction[];
 
-  return functions.map((func) => {
-    switch (func.name) {
+  const functions: PartialTransform[] = [];
+
+  const functionRegex = /([a-zA-Z][a-zA-Z0-9-]*)\s*\(([^)]*)\)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = functionRegex.exec(transformRawValue)) !== null) {
+    const functionName = match[1].trim();
+    const paramsString = match[2].trim();
+
+    const parsedValues = parseTransformValues(paramsString);
+
+    switch (functionName) {
       case 'translate':
-        const x = ensureCSSValue(func.args[0]?.raw) ?? 0;
-        const y = ensureCSSValue(func.args[1]?.raw) ?? x;
-        return { translate: [x, y] };
+        {
+          const x = parsedValues[0]?.value ?? 0;
+          const y = parsedValues[1]?.value ?? x;
+          functions.push({ translate: [x, y] });
+        }
+        break;
       case 'translateX':
-        return { translate: [ensureCSSValue(func.args[0]?.raw) ?? 0, 0] };
+        {
+          const x = parsedValues[0]?.value ?? 0;
+          functions.push({ translate: [x, 0] });
+        }
+        break;
       case 'translateY':
-        return { translate: [0, ensureCSSValue(func.args[0]?.raw) ?? 0] };
+        {
+          const y = parsedValues[0]?.value ?? 0;
+          functions.push({ translate: [0, y] });
+        }
+        break;
       case 'scale':
-        const sx = ensureCSSValue(func.args[0]?.raw) ?? 1;
-        const sy = ensureCSSValue(func.args[1]?.raw) ?? sx;
-        return { scale: [sx, sy] };
+        {
+          const sx = parsedValues[0]?.value ?? 1;
+          const sy = parsedValues[1]?.value ?? sx;
+          functions.push({ scale: [sx, sy] });
+        }
+        break;
       case 'scaleX':
-        return { scale: [ensureCSSValue(func.args[0]?.raw) ?? 1, 1] };
+        {
+          const sx = parsedValues[0]?.value ?? 1;
+          functions.push({ scale: [sx, 1] });
+        }
+        break;
       case 'scaleY':
-        return { scale: [1, ensureCSSValue(func.args[0]?.raw) ?? 1] };
+        {
+          const sy = parsedValues[0]?.value ?? 1;
+          functions.push({ scale: [1, sy] });
+        }
+        break;
       case 'rotate':
-        return { rotate: ensureCSSValue(func.args[0]?.raw) ?? 0 };
+        {
+          const angle = parsedValues[0]?.value ?? 0;
+          functions.push({ rotate: angle });
+        }
+        break;
       case 'skew':
-        const skewX = ensureCSSValue(func.args[0]?.raw) ?? 0;
-        const skewY = ensureCSSValue(func.args[1]?.raw) ?? 0;
-        return { skew: [skewX, skewY] };
+        {
+          const skewX = parsedValues[0]?.value ?? 0;
+          const skewY = parsedValues[1]?.value ?? 0;
+          functions.push({ skew: [skewX, skewY] });
+        }
+        break;
       case 'skewX':
-        return { skew: [ensureCSSValue(func.args[0]?.raw) ?? 0, 0] };
+        {
+          const skewX = parsedValues[0]?.value ?? 0;
+          functions.push({ skew: [skewX, 0] });
+        }
+        break;
       case 'skewY':
-        return { skew: [0, ensureCSSValue(func.args[0]?.raw) ?? 0] };
+        {
+          const skewY = parsedValues[0]?.value ?? 0;
+          functions.push({ skew: [0, skewY] });
+        }
+        break;
       case 'matrix':
-        const a = ensureCSSValue(func.args[0]?.raw) ?? 1;
-        const b = ensureCSSValue(func.args[1]?.raw) ?? 0;
-        const c = ensureCSSValue(func.args[2]?.raw) ?? 0;
-        const d = ensureCSSValue(func.args[3]?.raw) ?? 1;
-        const tx = ensureCSSValue(func.args[4]?.raw) ?? 0;
-        const ty = ensureCSSValue(func.args[5]?.raw) ?? 0;
-        // const translate = [e, f] as [number, number];
-        // const scale = [Math.sqrt(a * a + b * b), Math.sqrt(c * c + d * d)] as [number, number];
-        // const rotate = Math.atan2(b, a) * (180 / Math.PI);
-        // const skew = [Math.atan2(-c, d) * (180 / Math.PI), Math.atan2(a, b) * (180 / Math.PI)] as [number, number];
-
-        // return { translate, scale, skew, rotate };
-        return { matrix: [a, b, c, d, tx, ty] as [number, number, number, number, number, number] };
+        {
+          const a = parsedValues[0]?.value ?? 1;
+          const b = parsedValues[1]?.value ?? 0;
+          const c = parsedValues[2]?.value ?? 0;
+          const d = parsedValues[3]?.value ?? 1;
+          const e = parsedValues[4]?.value ?? 0;
+          const f = parsedValues[5]?.value ?? 0;
+          functions.push({ matrix: [a, b, c, d, e, f] });
+        }
+        break;
       default:
-        return {};
+        break;
     }
-  });
+  }
+
+  return functions;
 }
 
 export function getTransformOrigin(element: Element) {
@@ -213,9 +301,9 @@ export function getTransformOrigin(element: Element) {
   })();
 
   if (transformOriginRawValue) {
-    const expr = parseCSSExpression(transformOriginRawValue);
-    const x = Number((expr.literals[0] as ICSSPrimitive)?.value) ?? 0;
-    const y = Number((expr.literals[1] as ICSSPrimitive)?.value) ?? x;
+    const values = transformOriginRawValue.split(/[, ]+/).map((v) => v.trim());
+    const x = ensureCSSValue(values[0]) ?? 0;
+    const y = ensureCSSValue(values[1]) ?? 0;
 
     return [x, y] as [number, number];
   }

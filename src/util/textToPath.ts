@@ -1,24 +1,22 @@
-import { arrayBufferToString } from './arrayBufferToString.js';
-import css from 'css';
-import pLimit from 'p-limit';
 import * as fontkit from 'fontkit';
-import { ICSSFunction, parse as parseCSSExpression } from 'css-expression';
-import { blobToDataURL } from './blobToDataURL.js';
-import { ensureCSSValue, ensureNumber, getSVGValue } from './css.js';
-import paper from 'paper';
 import SVGPathCommander from 'svg-path-commander';
-import { findBestFontDeclaration, getAllFontDeclarations, getCharRangeRelevantFontDeclarations, getFontFile, resolveFontFile } from './resolveFonts.js';
+import { getFontDeclaration, resolveFontFile } from './resolveFonts';
+import parseInlineStyle, { Declaration } from 'inline-style-parser';
+import * as changeCase from 'change-case';
+import { segmentText } from './textSegmentation';
+import { getEmojiWidth, renderEmoji } from './emojiRenderer';
+import { hasProblematicCharactersForFontkit } from './unicode';
+import { rasterizeText } from './vectorizeText';
+import { ensureCSSValue, ensureNumber, getSVGValue } from './css';
 
-export type TextFragment = {
-  glyphs: Glyph[];
-  bbox: fontkit.Glyph['bbox'];
-  descent: number;
-  ascent: number;
-  unitsPerEm: number;
-};
 
-type Glyph = {
-  path?: SVGPathCommander;
+
+// Hybrid Glyph Segment Types
+export type GlyphSegment = PathGlyphSegment | InlineSVGGlyphSegment;
+
+export type PathGlyphSegment = {
+  type: 'path';
+  path: SVGPathCommander;
   bbox: fontkit.Glyph['bbox'];
   cbox: fontkit.Glyph['cbox'];
   xAdvance: number;
@@ -26,6 +24,25 @@ type Glyph = {
   letterSpacing: number;
   isLigature: boolean;
   isMark: boolean;
+};
+
+export type InlineSVGGlyphSegment = {
+  type: 'inline-svg';
+  svg: string;
+  width: number;
+  height: number;
+  baselineOffset: number;
+  xAdvance: number;
+  yOffset: number; // Offset für alignment baseline
+  letterSpacing: number;
+};
+
+export type TextFragment = {
+  glyphs: GlyphSegment[];
+  bbox: fontkit.Glyph['bbox'];
+  descent: number;
+  ascent: number;
+  unitsPerEm: number;
 };
 
 export type TextFormat = {
@@ -107,7 +124,12 @@ export function getFont(fontData: Uint8Array, concreteWeight?: number | string) 
     if (typeof concreteWeight === 'string') {
       return _font.getVariation(guessFontVariationtBasedOnNamedWeight(concreteWeight, (_font as any).namedVariations));
     } else {
-      const weightVariation = (_font as any).variationAxes['wght'] as { name: string; min: number; default: number; max: number };
+      const weightVariation = (_font as any).variationAxes['wght'] as {
+        name: string;
+        min: number;
+        default: number;
+        max: number;
+      };
 
       const weight = Math.min(Math.max(weightVariation.min, concreteWeight ?? weightVariation.default), weightVariation.max);
 
@@ -118,9 +140,17 @@ export function getFont(fontData: Uint8Array, concreteWeight?: number | string) 
   }
 }
 
-// After all, woff2 variations seem to be not working as expected because if we're calling getVariation() from a font with named variations, the returned font will not work with the fontkit layout() function
-// but an error happens (I have no idea why)
-function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing: number, concreteWeight?: number | string): TextFragment {
+async function generateSvgPathRules(
+  text: string,
+  fontData: Uint8Array,
+  letterSpacing: number,
+  fontSize: number,
+  concreteWeight: number | string | undefined,
+  format: TextFormat,
+  stylesheet: string,
+  spanStyle?: string,
+  isDebug = false
+): Promise<TextFragment> {
   const fontBase = fontkit.create(fontData as any);
   const _font = (() => {
     if ((fontBase as fontkit.FontCollection).fonts) {
@@ -136,7 +166,12 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
       if (typeof concreteWeight === 'string') {
         return _font.getVariation(guessFontVariationtBasedOnNamedWeight(concreteWeight, (_font as any).namedVariations));
       } else {
-        const weightVariation = (_font as any).variationAxes['wght'] as { name: string; min: number; default: number; max: number };
+        const weightVariation = (_font as any).variationAxes['wght'] as {
+          name: string;
+          min: number;
+          default: number;
+          max: number;
+        };
 
         const weight = Math.min(Math.max(weightVariation.min, concreteWeight ?? weightVariation.default), weightVariation.max);
 
@@ -146,31 +181,105 @@ function generateSvgPathRules(text: string, fontData: Uint8Array, letterSpacing:
       return _font;
     }
   })();
-  const glyphs: Glyph[] = [];
 
-  const run = (() => {
-    return font.layout(text);
-  })();
+  const glyphs: GlyphSegment[] = [];
+
+  const segments = segmentText(text);
   let xAdvance = 0;
-  let i = 0;
-  for (const glyph of run.glyphs) {
-    const { bbox, cbox, advanceWidth, isLigature, isMark } = glyph;
+  for (const segment of segments) {
+    if (segment.type === 'text') {
+      const hasProblematicChars = hasProblematicCharactersForFontkit(segment.text);
+      if (hasProblematicChars) {
+        const styleParsed = spanStyle ? parseInlineStyle(spanStyle) : [];
+        const fillDecl = styleParsed.find((entry) => entry.type === 'declaration' && entry.property === 'fill') as
+          | Declaration
+          | undefined;
+        const fillValue = fillDecl ? fillDecl.value : 'black';
+        const strokeDecl = styleParsed.find((entry) => entry.type === 'declaration' && entry.property === 'stroke') as
+          | Declaration
+          | undefined;
+        const strokeValue = strokeDecl ? strokeDecl.value : 'none';
+        const strokeWidthDecl = styleParsed.find(
+          (entry) => entry.type === 'declaration' && entry.property === 'stroke-width'
+        ) as Declaration | undefined;
+        const strokeWidthValue = strokeWidthDecl ? ensureCSSValue(strokeWidthDecl.value) ?? 0 : 0;
 
-    const path = glyph.path.commands.length > 0 ? new SVGPathCommander(glyph.path.toSVG()).transform({ scale: [1, -1] }) : undefined;
+        const raserizedText = await rasterizeText(
+          segment.text,
+          { ...format, fontSize: font.unitsPerEm },
+          stylesheet,
+          fillValue,
+          strokeValue,
+          strokeWidthValue * (font.unitsPerEm / fontSize)
+        );
 
-    glyphs.push({
-      path: path,
-      bbox,
-      cbox,
-      advanceWidth,
-      isLigature,
-      isMark,
-      xAdvance,
-      letterSpacing,
-    });
+        const svg = `
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${raserizedText.width} ${raserizedText.height}">
+            <rect x="0" y="0" width="${raserizedText.width}" height="${raserizedText.height}" style="fill: none;" />
+            <image href="${raserizedText.dataUrl}" x="0" y="0" width="${raserizedText.width}" height="${raserizedText.height}" />
+          </svg>
+        `;
+        glyphs.push({
+          type: 'inline-svg',
+          svg,
+          width: raserizedText.width,
+          height: raserizedText.height,
+          baselineOffset: raserizedText.fontBoundingBoxDescent * 2,
+          xAdvance,
+          yOffset: 0,
+          letterSpacing,
+        });
+        xAdvance += raserizedText.width + letterSpacing;
+      } else {
+        const run = font.layout(segment.text);
+        let i = 0;
+        for (const glyph of run.glyphs) {
+          const hasNoPath = glyph.path.commands.length === 0;
+          const { bbox, cbox, advanceWidth, isLigature, isMark } = glyph;
+          const path =
+            glyph.path.commands.length > 0 ? new SVGPathCommander(glyph.path.toSVG()).transform({ scale: [1, -1] }) : undefined;
 
-    xAdvance += run.positions[i].xAdvance;
-    i++;
+          if (path) {
+            glyphs.push({
+              type: 'path',
+              path: path,
+              bbox,
+              cbox,
+              advanceWidth,
+              isLigature,
+              isMark,
+              xAdvance,
+              letterSpacing,
+            });
+          }
+
+          xAdvance += run.positions[i].xAdvance + letterSpacing;
+          i++;
+        }
+        const spacesAtTheEnd = segment.text.length - segment.text.trimEnd().length;
+      }
+    } else {
+      // Emoji segment
+
+      const emojiSvg = await renderEmoji(segment.text);
+
+      if (emojiSvg) {
+        const emojiWidth = getEmojiWidth(segment.text, font.unitsPerEm);
+
+        glyphs.push({
+          type: 'inline-svg',
+          svg: emojiSvg,
+          width: emojiWidth,
+          height: font.unitsPerEm,
+          baselineOffset: -font.descent * 0.5,
+          xAdvance,
+          yOffset: 0,
+          letterSpacing,
+        });
+
+        xAdvance += emojiWidth + letterSpacing;
+      }
+    }
   }
 
   return {
@@ -193,22 +302,56 @@ function scaleFontkitBBox(bbox: fontkit.Glyph['bbox'], scale: number) {
   };
 }
 
-export function textToPath(text: string, fontData: Uint8Array, fontSize: number, letterSpacing: number, alignmentBaseline: 'hanging' | 'middle' | 'baseline', concreteWeight?: number | string) {
-  const { glyphs, ascent, descent, unitsPerEm, bbox } = generateSvgPathRules(text, fontData, letterSpacing, concreteWeight);
+export async function textToPath(
+  text: string,
+  fontData: Uint8Array,
+  fontSize: number,
+  letterSpacing: number,
+  alignmentBaseline: 'hanging' | 'middle' | 'baseline',
+  concreteWeight: number | string | undefined,
+  format: TextFormat,
+  stylesheet: string,
+  spanStyle?: string,
+  isDebug = false
+) {
+  const { glyphs, ascent, descent, unitsPerEm, bbox } = await generateSvgPathRules(
+    text,
+    fontData,
+    letterSpacing,
+    fontSize,
+    concreteWeight,
+    format,
+    stylesheet,
+    spanStyle,
+    isDebug
+  );
 
   const scale = fontSize / unitsPerEm;
 
   for (const glyph of glyphs) {
-    if (glyph.path) {
+    if (glyph.type === 'path') {
       glyph.path.transform({ scale });
       glyph.xAdvance = glyph.xAdvance * scale;
       glyph.advanceWidth *= scale;
       glyph.bbox = scaleFontkitBBox(glyph.bbox, scale);
       glyph.cbox = scaleFontkitBBox(glyph.cbox, scale);
+
       if (alignmentBaseline === 'hanging') {
-        glyph.path.transform({ translate: [0, ascent] });
+        glyph.path.transform({ translate: [0, ascent * scale] });
       } else if (alignmentBaseline === 'middle') {
-        glyph.path.transform({ translate: [0, (ascent + descent) / 2] });
+        glyph.path.transform({ translate: [0, ((ascent + descent) / 2) * scale] });
+      }
+    } else if (glyph.type === 'inline-svg') {
+      glyph.width = glyph.width * scale;
+      glyph.height = glyph.height * scale;
+      glyph.xAdvance = glyph.xAdvance * scale;
+
+      if (alignmentBaseline === 'hanging') {
+        glyph.yOffset = (glyph.baselineOffset + ascent) * scale;
+      } else if (alignmentBaseline === 'middle') {
+        glyph.yOffset = (glyph.baselineOffset + (ascent + descent) / 2) * scale;
+      } else {
+        glyph.yOffset = 0 + glyph.baselineOffset * scale;
       }
     }
   }
@@ -217,10 +360,19 @@ export function textToPath(text: string, fontData: Uint8Array, fontSize: number,
 }
 
 export function combineBBoxes(bboxes: { x: number; y: number; width: number; height: number }[]) {
+  if (bboxes.length === 0) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+
   const bboxesAbs = bboxes.map(({ x, y, width, height }) => ({ left: x, top: y, right: x + width, bottom: y + height }));
 
   const accumulatedBBoxAbs = bboxesAbs.reduce((acc, { left, top, right, bottom }) => {
-    return { left: Math.min(acc.left, left), top: Math.min(acc.top, top), right: Math.max(acc.right, right), bottom: Math.max(acc.bottom, bottom) };
+    return {
+      left: Math.min(acc.left, left),
+      top: Math.min(acc.top, top),
+      right: Math.max(acc.right, right),
+      bottom: Math.max(acc.bottom, bottom),
+    };
   }, bboxesAbs[0]);
 
   return {
@@ -231,10 +383,22 @@ export function combineBBoxes(bboxes: { x: number; y: number; width: number; hei
   };
 }
 
-export type SpanDescriptor = { format: TextFormat; text: string; dx?: number; dy?: number; x?: number; y?: number; style?: string; tspan?: SVGTSpanElement };
+export type SpanDescriptor = {
+  format: TextFormat;
+  text: string;
+  dx?: number;
+  dy?: number;
+  x?: number;
+  y?: number;
+  style?: string;
+  tspan?: SVGTSpanElement;
+};
 
-export function textToSpans(text: SVGTextElement) {
+export function textToSpans(text: SVGTextElement, isDebug = false) {
   const textBaseFormat = getTextFormat(text);
+
+  const styleAttr = text.getAttribute('style');
+  const inlineStyleEntries = styleAttr ? parseInlineStyle(styleAttr) : [];
 
   const spans = Array.from(text.childNodes)
     .map((node) => {
@@ -252,6 +416,17 @@ export function textToSpans(text: SVGTextElement) {
         const dy = ensureNumber(tspan.getAttribute('dy') ?? undefined);
         const x = ensureNumber(tspan.getAttribute('x') ?? undefined);
         const y = ensureNumber(tspan.getAttribute('y') ?? undefined);
+        const styleAttr = tspan.getAttribute('style');
+        const inlineStyleEntriesTspan = styleAttr ? parseInlineStyle(styleAttr) : [];
+        const combinedStyleEntries = [...inlineStyleEntries, ...inlineStyleEntriesTspan];
+        const styleString = combinedStyleEntries
+          .map((entry) => {
+            if (entry.type === 'declaration') {
+              return `${entry.property}: ${entry.value};`;
+            }
+            return '';
+          })
+          .join(' ');
         return {
           tspan,
           format: getTextFormat(tspan, textBaseFormat),
@@ -260,7 +435,7 @@ export function textToSpans(text: SVGTextElement) {
           dy,
           x,
           y,
-          style: tspan.getAttribute('style') ?? undefined,
+          style: styleString,
         };
       }
     })
@@ -276,64 +451,196 @@ export function textToSpans(text: SVGTextElement) {
   };
 }
 
-export async function renderTextSpans(stylesheet: string, spans: SpanDescriptor[], baseX: number, baseY: number) {
+export type RenderedSegment = RenderedPathSegment | RenderedInlineSVGSegment;
+
+export type RenderedPathSegment = {
+  type: 'path';
+  path: SVGPathCommander;
+  bbox: { x: number; y: number; width: number; height: number };
+};
+
+export type RenderedInlineSVGSegment = {
+  type: 'inline-svg';
+  svg: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export async function renderTextSpans(
+  stylesheet: string,
+  spans: SpanDescriptor[],
+  baseX: number,
+  baseY: number,
+  isDebug = false
+) {
   let spanOffset = 0;
 
-  const paths = await Promise.all(
-    spans.map(async (span, index) => {
-      const { format } = span;
+  let paths: {
+    glyphBBoxes: { x: number; y: number; width: number; height: number }[];
+    bbox: { x: number; y: number; width: number; height: number };
+    segments: RenderedSegment[];
+    style?: string;
+    text: string;
+    ascent: number;
+    descent: number;
+    unitsPerEm: number;
+    fontBBox: fontkit.Glyph['bbox'];
+  }[] = [];
 
-      const fontSrc = getFontFile(stylesheet, format.fontFamily, format.fontWeight, format.fontStyle);
-      const needsSpaceAfter = index < spans.length - 1;
+  if (spans.length === 0) {
+    return [];
+  }
 
-      const { glyphs, ascent, descent, unitsPerEm, fontBBox } = textToPath(needsSpaceAfter ? span.text + ' !' : span.text, await resolveFontFile(fontSrc), format.fontSize, format.letterSpacing, 'baseline', format.fontWeight);
+  console.log('renderTextSpans', spans);
 
-      const dx = span.dx ?? (span.x !== undefined ? span.x - (baseX + spanOffset) : 0);
-      const dy = span.dy ?? (span.y !== undefined ? span.y - baseY : 0);
+  for (const span of spans) {
+    const index = spans.indexOf(span);
+    const { format } = span;
 
-      const paths = glyphs
-        .map((glyph, index) => {
-          return glyph.path ? glyph.path.transform({ translate: [baseX + dx + spanOffset + glyph.xAdvance + index * format.letterSpacing, baseY + dy] }) : undefined;
-        })
-        .filter((path) => path !== undefined) as SVGPathCommander[];
-      const glyphBBoxes = paths.map((path) => ({ x: path.bbox.x, y: path.bbox.y, width: path.bbox.width, height: path.bbox.height })).slice(0, needsSpaceAfter ? -1 : undefined);
-      const lastPath = paths[paths.length - 1];
-      const secondLastPath = paths[paths.length - 2];
-      const bbox = combineBBoxes(glyphBBoxes);
-      const spanWidth = bbox.width + (needsSpaceAfter ? lastPath.bbox.x - (secondLastPath.bbox.x + secondLastPath.bbox.width) : 0);
-      spanOffset += dx + spanWidth;
-      return {
-        glyphBBoxes,
-        bbox,
-        paths: needsSpaceAfter ? paths.slice(0, -1) : paths,
-        style: span.style,
-        text: span.text + (needsSpaceAfter ? ' ' : ''),
-        ascent,
-        descent,
-        unitsPerEm,
-        fontBBox,
-      };
-    })
-  );
+    const fontDec = getFontDeclaration(stylesheet, format.fontFamily, format.fontWeight, format.fontStyle);
+    const needsSpaceAfter = index < spans.length - 1;
+
+    const { glyphs, ascent, descent, unitsPerEm, fontBBox } = await textToPath(
+      span.text,
+      await resolveFontFile(fontDec.src),
+      format.fontSize,
+      format.letterSpacing,
+      'baseline',
+      format.fontWeight,
+      format,
+      stylesheet,
+      span.style,
+      isDebug
+    );
+
+    console.log('!!!!!!!', span.text);
+
+    const marginRight = needsSpaceAfter
+      ? await (async () => {
+          const { glyphs } = await textToPath(
+            '! !',
+            await resolveFontFile(fontDec.src),
+            format.fontSize,
+            format.letterSpacing,
+            'baseline',
+            format.fontWeight,
+            format,
+            stylesheet,
+            span.style,
+            isDebug
+          );
+
+          const firstGlyph = glyphs[0] as PathGlyphSegment;
+          const secondGlyph = glyphs[1] as PathGlyphSegment;
+          const spaceWidth = secondGlyph.xAdvance - (firstGlyph.xAdvance + firstGlyph.advanceWidth);
+          return spaceWidth;
+        })()
+      : 0;
+
+    const dx = span.dx ?? (span.x !== undefined ? span.x - (baseX + spanOffset) : 0);
+    const dy = span.dy ?? (span.y !== undefined ? span.y - baseY : 0);
+
+    const segments: RenderedSegment[] = [];
+    const glyphBBoxes: { x: number; y: number; width: number; height: number }[] = [];
+
+    glyphs.forEach((glyph) => {
+      if (glyph.type === 'path') {
+        const transformedPath = glyph.path.transform({
+          translate: [baseX + dx + spanOffset + glyph.xAdvance, baseY + dy],
+        });
+
+        segments.push({
+          type: 'path',
+          path: transformedPath,
+          bbox: {
+            x: transformedPath.bbox.x,
+            y: transformedPath.bbox.y,
+            width: transformedPath.bbox.width,
+            height: transformedPath.bbox.height,
+          },
+        });
+
+        glyphBBoxes.push({
+          x: transformedPath.bbox.x,
+          y: transformedPath.bbox.y,
+          width: transformedPath.bbox.width,
+          height: transformedPath.bbox.height,
+        });
+      } else if (glyph.type === 'inline-svg') {
+        const x = baseX + dx + spanOffset + glyph.xAdvance;
+        const y = baseY + dy + glyph.yOffset;
+
+        segments.push({
+          type: 'inline-svg',
+          svg: glyph.svg,
+          x,
+          y,
+          width: glyph.width,
+          height: glyph.height,
+        });
+
+        glyphBBoxes.push({
+          x,
+          y: y - glyph.height, // SVG y-Koordinate ist oben, Glyph baseline ist unten
+          width: glyph.width,
+          height: glyph.height,
+        });
+      }
+    });
+
+    // Entferne das Leerzeichen am Ende, falls nötig
+    // const finalSegments = needsSpaceAfter ? segments.slice(0, -1) : segments;
+    // const finalGlyphBBoxes = needsSpaceAfter ? glyphBBoxes.slice(0, -1) : glyphBBoxes;
+
+    const bbox = combineBBoxes(glyphBBoxes);
+
+    // Berechne die Breite des Spans einschließlich des Abstands zum nächsten Span
+    let spanWidth = bbox.width + marginRight;
+
+    spanOffset += dx + spanWidth;
+
+    paths.push({
+      glyphBBoxes: glyphBBoxes,
+      bbox,
+      segments: segments,
+      style: span.style,
+      text: span.text + (needsSpaceAfter ? ' ' : ''),
+      ascent,
+      descent,
+      unitsPerEm,
+      fontBBox,
+    });
+  }
+
   return paths;
 }
 
 export async function textElementToPath(text: SVGTextElement, rootSVG: SVGSVGElement) {
+  const isDebug = text.textContent === '[Fòdšz•Īn] Substantiv - deutsch';
+
   const stylesheet = Array.from(rootSVG.querySelectorAll('style'))
     .map((style) => style.textContent)
     .join('\n');
 
   const { spans, x: baseX, y: baseY } = textToSpans(text);
-  const paths = await renderTextSpans(stylesheet, spans, baseX, baseY);
-
-  // const paths = textPathDescriptor.glyphs
-  //   .map((glyph) => {
-  //     return glyph.path ? glyph.path.transform({ translate: [x + glyph.xAdvance, y] }) : undefined;
-  //   })
-  //   .filter((path) => path !== undefined) as SVGPathCommander[];
+  const paths = await renderTextSpans(stylesheet, spans, baseX, baseY, isDebug);
 
   return {
-    paths: paths.map((p) => ({ paths: p.paths, style: p.style })),
+    paths: paths.map((p) => ({ segments: p.segments, style: p.style })),
     text: paths.map((p) => p.text).join(''),
   };
+}
+
+function getSVGUrlValue(element: Element, propertyName: string) {
+  const propValStr = getSVGValue(element, propertyName);
+  if (!propValStr) {
+    return undefined;
+  }
+  const url = propValStr.match(/url\(\s*(?:['"])?([^'")\s]+)(?:['"])?\s*\)/i)?.[1];
+  if (!url) {
+    return undefined;
+  }
+  return url;
 }

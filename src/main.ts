@@ -9,8 +9,6 @@ import { textElementToPath } from './util/textToPath.js';
 import SVGPathCommander from 'svg-path-commander';
 import { transformPath } from './main.js';
 
-export const foo = 'bar';
-
 export * from './util/css.js';
 export * from './util/xml.js';
 export * from './helpers.js';
@@ -20,6 +18,10 @@ export * from './util/cleanupBluepic.js';
 export * from './util/rasterize.js';
 export * from './util/textToPath.js';
 export * from './util/resolveFonts.js';
+export * from './util/vectorizeText.js';
+export * from './util/textSegmentation.js';
+export * from './util/emojiRenderer.js';
+export * from './util/renderSVG.js';
 
 export type StdDeviation = [number, number];
 export type Blur = {
@@ -693,22 +695,57 @@ export async function simplifySVG(
     g.setAttribute('data-keep', 'true');
     g.setAttribute('class', 'text-element');
 
-    g.setAttribute('data-text', text);
-    const allPaths = paths.map((p) => p.paths.map((path) => ({ style: p.style, path }))).flat();
+    const allSegments = paths.map((p) => p.segments.map((segment) => ({ style: p.style, segment }))).flat();
 
-    for (const { path, style } of allPaths) {
-      const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      pathElement.setAttribute('d', path.toString());
-      const styleStr = createInlineStyle({
+    for (const { segment, style } of allSegments) {
+      const baseStyleObject = {
         ...getStyleObjectFromInlineStyle(style ?? ''),
         mask: mask ? `url('${mask}')` : undefined,
         clipPath: clipPath ? `url('${clipPath}')` : undefined,
-      });
-      if (styleStr) {
-        pathElement.setAttribute('style', styleStr);
-      }
+      };
 
-      g.appendChild(pathElement);
+      if (segment.type === 'path') {
+        const pathElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pathElement.setAttribute('d', segment.path.toString());
+
+        const styleStr = createInlineStyle(baseStyleObject);
+        if (styleStr) {
+          pathElement.setAttribute('style', styleStr);
+        }
+
+        g.appendChild(pathElement);
+      } else if (segment.type === 'inline-svg') {
+        const segmentGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        segmentGroup.setAttribute('transform', `translate(${segment.x}, ${segment.y - segment.height})`);
+
+        const svgElement = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svgElement.setAttribute('width', segment.width.toString());
+        svgElement.setAttribute('height', segment.height.toString());
+        svgElement.setAttribute('viewBox', `0 0 ${segment.width} ${segment.height}`);
+
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = segment.svg;
+
+        if (tempDiv.firstElementChild?.tagName.toLowerCase() === 'svg') {
+          const sourceSvg = tempDiv.firstElementChild as SVGSVGElement;
+
+          const viewBox = sourceSvg.getAttribute('viewBox');
+          if (viewBox) {
+            svgElement.setAttribute('viewBox', viewBox);
+          }
+          svgElement.innerHTML = sourceSvg.innerHTML;
+        } else {
+          svgElement.innerHTML = segment.svg;
+        }
+
+        const styleStr = createInlineStyle(baseStyleObject);
+        if (styleStr) {
+          svgElement.setAttribute('style', styleStr);
+        }
+
+        segmentGroup.appendChild(svgElement);
+        g.appendChild(segmentGroup);
+      }
     }
 
     textElement.replaceWith(g);

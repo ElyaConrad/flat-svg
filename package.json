@@ -1,6 +1,6 @@
 {
   "name": "flat-svg",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "type": "module",
   "main": "./dist/cjs/main.js",
   "module": "./dist/esm/main.js",
@@ -56,9 +56,9 @@
   "dependencies": {
     "change-case": "^5.4.4",
     "css": "^3.0.0",
-    "css-expression": "^0.0.8",
     "fontkit": "^2.0.4",
     "gradient2svg": "^0.0.4",
+    "grapheme-splitter": "^1.0.4",
     "inline-style-parser": "^0.2.4",
     "jsdom": "^25.0.1",
     "p-limit": "^6.1.0",
