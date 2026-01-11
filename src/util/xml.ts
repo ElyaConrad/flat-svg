@@ -1,6 +1,5 @@
 // // @ts-expect-error well
 // import * as a from '@js-bits/dom-parser';
-import xmlFormat from 'xml-formatter';
 
 // const xmlFormat = (str: string, opts: any) => str;
 
@@ -10,18 +9,19 @@ import xmlFormat from 'xml-formatter';
 // import beautify from 'xml-beautifier';
 // }
 const isNode = typeof window === 'undefined';
-let __JSDOM__: any;
+//let __JSDOM__: any;
 export async function preloadJSDOM() {
   if (isNode) {
-    __JSDOM__ = await import('jsdom');
+    //__JSDOM__ = await import('jsdom');
   }
 }
 
 export function parseDOM(str: string, contentType: DOMParserSupportedType) {
   if (isNode) {
-    const { JSDOM } = __JSDOM__;
-    const dom = new JSDOM(str, { pretendToBeVisual: true, contentType });
-    return dom.window.document as Document;
+    // const { JSDOM } = __JSDOM__;
+    // const dom = new JSDOM(str, { pretendToBeVisual: true, contentType });
+    // return dom.window.document as Document;
+    throw new Error('Not implemented in Node.js environment yet.');
   } else {
     const parser = new DOMParser();
     return parser.parseFromString(str, contentType);
@@ -184,18 +184,18 @@ export function domNodeToXMLNode(node: Node, skipElements: string[]) {
   return xmlNode as ElementNode & { children: XMLNode[] };
 }
 
-export function stringifyXML(node: XMLNode, preprocessingInstructions: XMLProcessingInstruction[], pretty = false) {
-  const raw =
-    preprocessingInstructions
-      .map(
-        (pi) =>
-          `<?${pi.name} ${Object.entries(pi.attributes)
-            .map(([key, value]) => `${key}="${value}"`)
-            .join(' ')}?>`
-      )
-      .join('\n') +
-    '\n' +
-    stringifyNode(node);
+// export function stringifyXML(node: XMLNode, preprocessingInstructions: XMLProcessingInstruction[], pretty = false) {
+//   const raw =
+//     preprocessingInstructions
+//       .map(
+//         (pi) =>
+//           `<?${pi.name} ${Object.entries(pi.attributes)
+//             .map(([key, value]) => `${key}="${value}"`)
+//             .join(' ')}?>`
+//       )
+//       .join('\n') +
+//     '\n' +
+//     stringifyNode(node);
 
-  return pretty ? xmlFormat(raw, { collapseContent: true }) : raw;
-}
+//   return pretty ? xmlFormat(raw, { collapseContent: true }) : raw;
+// }

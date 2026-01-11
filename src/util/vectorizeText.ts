@@ -36,7 +36,7 @@ async function loadFontsForCanvas(cssData: string, textsToRender: string[] = [])
 
       // Font laden und zum document hinzufügen
       await fontFace.load();
-      document.fonts.add(fontFace);
+      (document.fonts as any).add(fontFace);
 
       // console.log(`✓ Loaded: ${decl.fontFamily} ${fontWeight} ${decl.fontStyle || 'normal'}`);
     } catch (error) {

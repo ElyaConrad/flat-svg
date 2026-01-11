@@ -1,6 +1,6 @@
 import paper from 'paper';
 import { createInlineStyle, DropShadow, ensureNumber, getEleentOpacity, getElementBlur, getElementClipPath, getElementDropShadow, getElementMask, getElementStyle, getStyleObjectFromInlineStyle, getTransformationsInOrder, getTransformOrigin, PartialTransform } from './util/css.js';
-import { ElementNode, makeElementNode, nodeToNode, parseDOM, preloadJSDOM, stringifyNode, XMLNode } from './util/xml.js';
+import { ElementNode, makeElementNode, nodeToNode, parseDOM, stringifyNode, XMLNode } from './util/xml.js';
 import { getElementAttributes, getUniqueID } from './helpers.js';
 import { getClipPath, getSimpleClipPath } from './util/clipPath.js';
 import { ApplyColorMatrixFunction, ColorMatrix, getElementColorMatrices, RasterizeFunction, rasterizeMasks } from './util/rasterize.js';
@@ -678,8 +678,6 @@ export async function simplifySVG(
 
   paper.setup(new paper.Size(viewBox[2] * (opts.paperInnerScale ?? 1), viewBox[3] * (opts.paperInnerScale ?? 1)));
 
-  // Just to make sure we have a JSDOM instance ready that will be uased instead of the browser's DOMParser
-  await preloadJSDOM();
 
   console.time('text-to-path');
 
